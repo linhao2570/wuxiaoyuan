@@ -1,4 +1,5 @@
-name: wyu_esurfing
+﻿# 重写 pubspec.yaml - 用最精简稳定的依赖
+content = '''name: wyu_esurfing
 description: 五邑大学天翼校园网自动登录
 publish_to: 'none'
 version: 1.0.0+1
@@ -18,3 +19,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+'''
+
+with open('pubspec.yaml', 'w', encoding='utf-8', newline='\n') as f:
+    f.write(content)
+print('pubspec.yaml rewritten')

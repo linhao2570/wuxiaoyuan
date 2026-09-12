@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+﻿# 重写 main.dart - 去掉前台服务相关代码，用 wifi_info_flutter
+content = '''import 'package:flutter/material.dart';
 import 'package:wifi_info_flutter/wifi_info_flutter.dart';
 import 'auto_login_service.dart';
 import 'portal_login.dart';
@@ -58,8 +59,8 @@ class _HomePageState extends State<HomePage> {
     _userCtrl.text = _config.username;
     _passCtrl.text = _config.password;
     _formFieldsCtrl.text = _config.formFields.entries
-        .map((e) => '\${e.key}=\${e.value}')
-        .join('\n');
+        .map((e) => '\\${e.key}=\\${e.value}')
+        .join('\\n');
     _intervalCtrl.text = _config.pollInterval.toString();
 
     _service.logStream.listen((log) {
@@ -97,7 +98,7 @@ class _HomePageState extends State<HomePage> {
 
   Map<String, String> _parseFormFields(String text) {
     final map = <String, String>{};
-    for (final line in text.split('\n')) {
+    for (final line in text.split('\\n')) {
       final trimmed = line.trim();
       if (trimmed.isEmpty || !trimmed.contains('=')) continue;
       final idx = trimmed.indexOf('=');
@@ -288,7 +289,7 @@ class _HomePageState extends State<HomePage> {
               maxLines: 4,
               decoration: const InputDecoration(
                 labelText: '额外表单字段（每行一个，格式 key=value）',
-                hintText: 'createAuthorFlag=0\npageView=pc',
+                hintText: 'createAuthorFlag=0\\npageView=pc',
                 border: OutlineInputBorder(),
                 isDense: true,
               ),
@@ -369,3 +370,8 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 }
+'''
+
+with open('lib/main.dart', 'w', encoding='utf-8', newline='\n') as f:
+    f.write(content)
+print('main.dart rewritten')

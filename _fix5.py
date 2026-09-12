@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+﻿content = '''<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- 网络权限 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -39,3 +39,8 @@
             android:value="2" />
     </application>
 </manifest>
+'''
+
+with open('android/app/src/main/AndroidManifest.xml', 'w', encoding='utf-8', newline='\n') as f:
+    f.write(content)
+print('AndroidManifest.xml updated')

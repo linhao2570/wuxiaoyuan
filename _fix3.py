@@ -1,4 +1,6 @@
-import 'dart:async';
+﻿# 完全重写 auto_login_service.dart - 最简实现，只用 Timer，不用前台服务框架
+# 先用一个简单的全局服务类
+content = '''import 'dart:async';
 import 'portal_login.dart';
 import 'storage.dart';
 
@@ -106,3 +108,8 @@ class AutoLoginService {
     await _doCheck();
   }
 }
+'''
+
+with open('lib/auto_login_service.dart', 'w', encoding='utf-8', newline='\n') as f:
+    f.write(content)
+print('auto_login_service.dart rewritten')
