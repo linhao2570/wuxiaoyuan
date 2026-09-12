@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:wifi_info_flutter/wifi_info_flutter.dart';
 import 'auto_login_service.dart';
