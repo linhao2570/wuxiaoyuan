@@ -1,4 +1,7 @@
-import 'dart:convert';
+﻿import os
+
+# 1. 更新 portal_login.dart - 增加 RSA 加密和验证码获取
+new_content = '''import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
@@ -154,7 +157,7 @@ Future<LoginResult> doPortalLogin({
 
     return LoginResult(success: success, message: message);
   } catch (e) {
-    return LoginResult(success: false, message: '网络错误: ${e.toString().split('\n').first}');
+    return LoginResult(success: false, message: '网络错误: ${e.toString().split('\\n').first}');
   }
 }
 
@@ -171,3 +174,8 @@ Future<bool> isOnline({Duration timeout = const Duration(seconds: 4)}) async {
     return false;
   }
 }
+'''
+
+with open('lib/portal_login.dart', 'w', encoding='utf-8', newline='\n') as f:
+    f.write(new_content)
+print('portal_login.dart updated')

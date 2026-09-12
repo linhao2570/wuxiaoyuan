@@ -1,4 +1,7 @@
-import 'dart:async';
+﻿import os
+
+# 更新 main.dart - 增加验证码显示、Portal 基础 URL 配置
+new_content = '''import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'auto_login_service.dart';
@@ -384,3 +387,8 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 }
+'''
+
+with open('lib/main.dart', 'w', encoding='utf-8', newline='\n') as f:
+    f.write(new_content)
+print('main.dart updated')
