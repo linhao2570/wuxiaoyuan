@@ -1,5 +1,6 @@
 ﻿import 'dart:async';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:flutter_foreground_task/models/service_request_result.dart';
 import 'portal_login.dart';
 import 'storage.dart';
 
@@ -60,13 +61,13 @@ class AutoLoginService {
       ),
     );
 
-    final started = await FlutterForegroundTask.startService(
+    final result = await FlutterForegroundTask.startService(
       notificationTitle: '校园网自动登录',
       notificationText: '后台运行中，断网自动重连',
       callback: _foregroundTaskCallback,
     );
 
-    if (started) {
+    if (result == ServiceRequestResult.success) {
       _setStatus(ServiceStatus.running);
       _log('服务已启动');
       _startPolling();
