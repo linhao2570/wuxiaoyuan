@@ -23,8 +23,11 @@ jobs:
           flutter-version: '3.24.x'
           channel: 'stable'
 
-      - name: Create platform projects
-        run: flutter create . --platforms android --org com.wyu.esurfing
+      - name: Create android platform project
+        run: |
+          rm -rf android
+          flutter create . --platforms android --org com.wyu --project-name esurfing
+
 
       - name: Install dependencies
         run: flutter pub get
