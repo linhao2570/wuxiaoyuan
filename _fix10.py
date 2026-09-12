@@ -1,4 +1,33 @@
-import 'dart:async';
+﻿# 1. 更新 pubspec.yaml - 去掉 wifi_info_flutter
+import os
+
+pubspec = '''name: wyu_esurfing
+description: 五邑大学天翼校园网自动登录
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  shared_preferences: ^2.2.0
+
+dev_dependencies:
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+'''
+
+with open('pubspec.yaml', 'w', encoding='utf-8', newline='\n') as f:
+    f.write(pubspec)
+print('pubspec.yaml updated')
+
+# 2. 重写 main.dart - 去掉 wifi_info_flutter 相关代码
+main_dart = '''import 'dart:async';
 import 'package:flutter/material.dart';
 import 'auto_login_service.dart';
 import 'portal_login.dart';
@@ -56,8 +85,8 @@ class _HomePageState extends State<HomePage> {
     _userCtrl.text = _config.username;
     _passCtrl.text = _config.password;
     _formFieldsCtrl.text = _config.formFields.entries
-        .map((e) => '\${e.key}=\${e.value}')
-        .join('\n');
+        .map((e) => '\\${e.key}=\\${e.value}')
+        .join('\\n');
     _intervalCtrl.text = _config.pollInterval.toString();
 
     _service.logStream.listen((log) {
@@ -82,7 +111,7 @@ class _HomePageState extends State<HomePage> {
 
   Map<String, String> _parseFormFields(String text) {
     final map = <String, String>{};
-    for (final line in text.split('\n')) {
+    for (final line in text.split('\\n')) {
       final trimmed = line.trim();
       if (trimmed.isEmpty || !trimmed.contains('=')) continue;
       final idx = trimmed.indexOf('=');
@@ -265,7 +294,7 @@ class _HomePageState extends State<HomePage> {
               maxLines: 4,
               decoration: const InputDecoration(
                 labelText: '额外表单字段（每行一个，格式 key=value）',
-                hintText: 'createAuthorFlag=0\npageView=pc',
+                hintText: 'createAuthorFlag=0\\npageView=pc',
                 border: OutlineInputBorder(),
                 isDense: true,
               ),
@@ -346,3 +375,45 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 }
+'''
+
+with open('lib/main.dart', 'w', encoding='utf-8', newline='\n') as f:
+    f.write(main_dart)
+print('main.dart updated')
+
+# 3. 更新 AndroidManifest.xml - 去掉不必要的权限
+manifest = '''<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <application
+        android:label="校园网自动登录"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+</manifest>
+'''
+# 注意：flutter create 会生成完整的 AndroidManifest，这里我们保留旧的（反正会被覆盖）
+
+print('done')
