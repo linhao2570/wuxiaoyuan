@@ -1,5 +1,4 @@
-import 'dart:async';
-import 'dart:typed_data';
+﻿import 'dart:async';
 import 'package:flutter/material.dart';
 import 'auto_login_service.dart';
 import 'portal_login.dart';
@@ -38,15 +37,11 @@ class _HomePageState extends State<HomePage> {
   AppConfig _config = AppConfig();
   final _logs = <String>[];
   bool _loading = true;
+  bool _loggingIn = false;
 
   final _baseUrlCtrl = TextEditingController();
   final _userCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
-  final _captchaCtrl = TextEditingController();
-  final _intervalCtrl = TextEditingController(text: '15');
-
-  Uint8List? _captchaBytes;
-  String _captchaCookie = '';
 
   @override
   void initState() {
@@ -59,12 +54,13 @@ class _HomePageState extends State<HomePage> {
     _baseUrlCtrl.text = _config.baseUrl;
     _userCtrl.text = _config.username;
     _passCtrl.text = _config.password;
-    _intervalCtrl.text = _config.pollInterval.toString();
 
     _service.logStream.listen((log) {
       if (!mounted) return;
-      setState(() => _logs.insert(0, '${_timeNow()} $log'));
-      if (_logs.length > 50) _logs.removeLast();
+      setState(() {
+        _logs.insert(0, '${_timeNow()} $log');
+        if (_logs.length > 80) _logs.removeLast();
+      });
     });
 
     _service.statusStream.listen((_) {
@@ -72,7 +68,6 @@ class _HomePageState extends State<HomePage> {
     });
 
     setState(() => _loading = false);
-    _refreshCaptcha();
   }
 
   String _timeNow() {
@@ -82,29 +77,13 @@ class _HomePageState extends State<HomePage> {
         '${now.second.toString().padLeft(2, '0')}';
   }
 
-  Future<void> _refreshCaptcha() async {
-    if (_baseUrlCtrl.text.trim().isEmpty) return;
-    try {
-      final data = await fetchCaptcha(_baseUrlCtrl.text.trim());
-      if (mounted) {
-        setState(() {
-          _captchaBytes = data['bytes'];
-          _captchaCookie = data['cookie'] ?? '';
-        });
-      }
-    } catch (e) {
-      // 忽略
-    }
-  }
-
   Future<void> _saveConfig() async {
     _config = AppConfig(
       baseUrl: _baseUrlCtrl.text.trim(),
       username: _userCtrl.text.trim(),
       password: _passCtrl.text.trim(),
-      pollInterval: int.tryParse(_intervalCtrl.text.trim()) ?? 15,
+      pollInterval: 15,
     );
-    if (_config.pollInterval < 5) _config.pollInterval = 5;
     await _config.save();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -122,54 +101,33 @@ class _HomePageState extends State<HomePage> {
         if (!_config.isValid) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('请先填写 Portal 地址和账号密码')),
+              const SnackBar(content: Text('请先填写完整配置')),
             );
           }
           return;
         }
       }
       await _saveConfig();
-      // 启动前需要先有一个验证码 cookie
-      if (_captchaCookie.isEmpty) {
-        await _refreshCaptcha();
-      }
       _service.start(_config);
     }
     setState(() {});
   }
 
-  Future<void> _testLogin() async {
-    await _saveConfig();
-    if (!_config.isValid || _captchaCtrl.text.trim().isEmpty || _captchaCookie.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('请先填写完整配置并输入验证码')),
-        );
-      }
-      return;
+  Future<void> _manualLogin() async {
+    if (_loggingIn) return;
+    if (!_config.isValid) {
+      await _saveConfig();
+      if (!_config.isValid) return;
     }
-    setState(() => _logs.insert(0, '${_timeNow()} 测试登录中...'));
-    
-    final loginKey = generateLoginKey(
-      _config.username,
-      _config.password,
-      _captchaCtrl.text.trim(),
-    );
-    
-    final result = await doPortalLogin(
-      baseUrl: _config.baseUrl,
-      loginKey: loginKey,
-      cookie: _captchaCookie,
-    );
-    
-    if (!mounted) return;
-    setState(() {
-      _logs.insert(
-          0, '${_timeNow()} 测试结果: ${result.success ? "成功" : "失败"} - ${result.message}');
-    });
-    // 刷新验证码 (不论成败都刷新)
-    _refreshCaptcha();
-    _captchaCtrl.clear();
+    setState(() => _loggingIn = true);
+    _logs.insert(0, '${_timeNow()} 正在手动登录 (OCR 识别验证码)...');
+    final result = await _service.manualLogin();
+    if (mounted) {
+      setState(() {
+        _logs.insert(0, '${_timeNow()} 结果: ${result.success ? "成功" : "失败"} - ${result.message}');
+        _loggingIn = false;
+      });
+    }
   }
 
   @override
@@ -215,19 +173,44 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 8),
+                    const Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('续期间隔', style: TextStyle(color: Colors.grey)),
+                        Text('每 90 分钟', style: TextStyle(color: Colors.grey)),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('检测间隔', style: TextStyle(color: Colors.grey)),
+                        Text('每 3 分钟', style: TextStyle(color: Colors.grey)),
+                      ],
+                    ),
                     const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _toggleService,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: running ? Colors.red : Colors.blue,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: _toggleService,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: running ? Colors.red : Colors.blue,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                            child: Text(running ? '停止服务' : '启动服务'),
+                          ),
                         ),
-                        child: Text(running ? '停止服务' : '启动服务',
-                            style: const TextStyle(fontSize: 16)),
-                      ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: running || _loggingIn ? null : _manualLogin,
+                            child: Text(_loggingIn ? '登录中...' : '手动登录'),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -246,7 +229,6 @@ class _HomePageState extends State<HomePage> {
                 isDense: true,
               ),
               enabled: !running,
-              onChanged: (_) => _refreshCaptcha(),
             ),
             const SizedBox(height: 8),
             Row(
@@ -278,71 +260,19 @@ class _HomePageState extends State<HomePage> {
               ],
             ),
             const SizedBox(height: 8),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                GestureDetector(
-                  onTap: _refreshCaptcha,
-                  child: Container(
-                    width: 120,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: _captchaBytes != null
-                        ? Image.memory(_captchaBytes!, fit: BoxFit.fill)
-                        : const Center(child: Text('验证码', style: TextStyle(color: Colors.grey))),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    controller: _captchaCtrl,
-                    decoration: const InputDecoration(
-                      labelText: '验证码 (点图片刷新)',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    enabled: !running,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                SizedBox(
-                  width: 100,
-                  child: TextField(
-                    controller: _intervalCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: '轮询间隔(秒)',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    enabled: !running,
-                  ),
-                ),
-                const Spacer(),
-                TextButton(
-                  onPressed: running ? null : _testLogin,
-                  child: const Text('测试登录'),
-                ),
-                const SizedBox(width: 8),
-                TextButton(
-                  onPressed: running ? null : _saveConfig,
-                  child: const Text('保存配置'),
-                ),
-              ],
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: running ? null : _saveConfig,
+                child: const Text('保存配置'),
+              ),
             ),
             const SizedBox(height: 16),
             const Text('日志',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Container(
-              height: 200,
+              height: 240,
               width: double.infinity,
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
@@ -365,7 +295,7 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 16),
             const Text(
-              '提示：首次需手动输入验证码登录，登录成功后 session 内可自动重登。',
+              '说明: 验证码自动 OCR 识别, 识别失败自动重试。每 90 分钟自动续期一次, 掉线自动重连。请将 App 加入电池优化白名单。',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
           ],
@@ -379,8 +309,7 @@ class _HomePageState extends State<HomePage> {
     _baseUrlCtrl.dispose();
     _userCtrl.dispose();
     _passCtrl.dispose();
-    _captchaCtrl.dispose();
-    _intervalCtrl.dispose();
+    disposeOCR();
     super.dispose();
   }
 }

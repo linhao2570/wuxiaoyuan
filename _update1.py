@@ -1,4 +1,7 @@
-name: wyu_esurfing
+﻿import os
+
+# 更新 pubspec.yaml - 加 OCR 依赖
+pubspec = '''name: wyu_esurfing
 description: 五邑大学天翼校园网自动登录
 publish_to: 'none'
 version: 1.0.0+1
@@ -18,3 +21,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+'''
+
+with open('pubspec.yaml', 'w', encoding='utf-8', newline='\n') as f:
+    f.write(pubspec)
+print('pubspec.yaml updated')
