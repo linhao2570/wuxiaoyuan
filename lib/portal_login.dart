@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui';
@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 class LoginResult {
   final bool success;
@@ -25,7 +26,7 @@ void disposeOCR() {
 
 Future<Map<String, dynamic>> fetchCaptcha(String baseUrl) async {
   final time = DateTime.now().millisecondsSinceEpoch;
-  final url = '$baseUrl/common/image_code.jsp?time=$time';
+  final url = '\/common/image_code.jsp?time=';
   final resp = await http.get(
     Uri.parse(url),
     headers: {
@@ -38,16 +39,44 @@ Future<Map<String, dynamic>> fetchCaptcha(String baseUrl) async {
   return {'cookie': cookie, 'bytes': resp.bodyBytes};
 }
 
+Future<Uint8List> preprocessCaptcha(Uint8List bytes) async {
+  try {
+    final codec = await instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    final image = frame.image;
+    const scale = 3;
+    final newWidth = image.width * scale;
+    final newHeight = image.height * scale;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    canvas.drawImageRect(
+      image,
+      Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+      Rect.fromLTWH(0, 0, newWidth.toDouble(), newHeight.toDouble()),
+      Paint()..filterQuality = FilterQuality.high,
+    );
+    final pic = recorder.endRecording();
+    final scaledImage = await pic.toImage(newWidth, newHeight);
+    final byteData = await scaledImage.toByteData(format: ImageByteFormat.png);
+    image.dispose();
+    scaledImage.dispose();
+    return byteData!.buffer.asUint8List();
+  } catch (e) {
+    return bytes;
+  }
+}
+
 Future<String> recognizeCaptcha(Uint8List imageBytes) async {
-  // 写入临时文件, 用 fromFilePath 避免 metadata 参数问题
+  final processed = await preprocessCaptcha(imageBytes);
   final tempDir = await getTemporaryDirectory();
-  final file = File('${tempDir.path}/captcha_${DateTime.now().millisecondsSinceEpoch}.jpg');
-  await file.writeAsBytes(imageBytes);
+  final file = File('\/captcha_\.png');
+  await file.writeAsBytes(processed);
   try {
     final inputImage = InputImage.fromFilePath(file.path);
     final recognized = await _textRecognizer.processImage(inputImage);
     var text = recognized.text.trim();
     text = text.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '').toUpperCase();
+    if (text.length > 6) text = text.substring(0, 4);
     return text;
   } catch (e) {
     return '';
@@ -86,7 +115,7 @@ BigInt _bytesToBigInt(Uint8List bytes) {
 }
 
 String generateLoginKey(String username, String password, String captcha) {
-  final plain = '{"userName":"$username","password":"$password","rand":"$captcha"}';
+  final plain = '{"userName":"","password":"","rand":""}';
   return _rsaEncrypt(plain);
 }
 
@@ -98,7 +127,7 @@ Future<LoginResult> doPortalLogin({
   String wlanacip = '',
   Duration timeout = const Duration(seconds: 5),
 }) async {
-  final url = '$baseUrl/ajax/login';
+  final url = '\/ajax/login';
   final body = <String, String>{
     'loginKey': loginKey,
     'wlanuserip': wlanuserip,
@@ -113,7 +142,9 @@ Future<LoginResult> doPortalLogin({
             'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36',
             'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
             'Cookie': cookie,
-            'Referer': '$baseUrl/qs/',
+            'Referer': '\/qs/',
+            'Origin': baseUrl,
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
           },
         )
         .timeout(timeout);
@@ -130,7 +161,7 @@ Future<LoginResult> doPortalLogin({
     }
     return LoginResult(success: success, message: message);
   } catch (e) {
-    return LoginResult(success: false, message: 'error: ${e.toString().split("\n").first}');
+    return LoginResult(success: false, message: 'error: ');
   }
 }
 
@@ -138,8 +169,9 @@ Future<LoginResult> autoLogin({
   required String baseUrl,
   required String username,
   required String password,
-  int maxRetries = 5,
+  int maxRetries = 8,
 }) async {
+  String lastMsg = '';
   for (int i = 0; i < maxRetries; i++) {
     try {
       final captchaData = await fetchCaptcha(baseUrl);
@@ -158,12 +190,14 @@ Future<LoginResult> autoLogin({
         cookie: cookie,
       );
       if (result.success) return result;
-      await Future.delayed(const Duration(seconds: 1));
+      lastMsg = result.message;
+      await Future.delayed(const Duration(milliseconds: 800));
     } catch (e) {
-      await Future.delayed(const Duration(seconds: 2));
+      lastMsg = e.toString().split('\n').first;
+      await Future.delayed(const Duration(seconds: 1));
     }
   }
-  return LoginResult(success: false, message: 'retries exhausted');
+  return LoginResult(success: false, message: '重试 \ 次失败, 最后: ');
 }
 
 Future<bool> isOnline({Duration timeout = const Duration(seconds: 4)}) async {

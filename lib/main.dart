@@ -1,4 +1,5 @@
 ﻿import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'auto_login_service.dart';
 import 'portal_login.dart';
@@ -14,7 +15,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '校园网自动登录',
+      title: 'aiqin',
       theme: ThemeData(
         primarySwatch: Colors.blue,
         useMaterial3: true,
@@ -42,6 +43,11 @@ class _HomePageState extends State<HomePage> {
   final _baseUrlCtrl = TextEditingController();
   final _userCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
+  final _captchaCtrl = TextEditingController();
+
+  Uint8List? _captchaBytes;
+  String _captchaCookie = '';
+  String _ocrResult = '';
 
   @override
   void initState() {
@@ -59,7 +65,7 @@ class _HomePageState extends State<HomePage> {
       if (!mounted) return;
       setState(() {
         _logs.insert(0, '${_timeNow()} $log');
-        if (_logs.length > 80) _logs.removeLast();
+        if (_logs.length > 100) _logs.removeLast();
       });
     });
 
@@ -68,6 +74,7 @@ class _HomePageState extends State<HomePage> {
     });
 
     setState(() => _loading = false);
+    _refreshCaptcha();
   }
 
   String _timeNow() {
@@ -75,6 +82,26 @@ class _HomePageState extends State<HomePage> {
     return '${now.hour.toString().padLeft(2, '0')}:'
         '${now.minute.toString().padLeft(2, '0')}:'
         '${now.second.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _refreshCaptcha() async {
+    if (_baseUrlCtrl.text.trim().isEmpty) return;
+    try {
+      final data = await fetchCaptcha(_baseUrlCtrl.text.trim());
+      final bytes = data['bytes'] as Uint8List?;
+      final cookie = data['cookie'] ?? '';
+      
+      if (mounted && bytes != null) {
+        final ocrText = await recognizeCaptcha(bytes);
+        setState(() {
+          _captchaBytes = bytes;
+          _captchaCookie = cookie;
+          _ocrResult = ocrText;
+        });
+      }
+    } catch (e) {
+      // 忽略
+    }
   }
 
   Future<void> _saveConfig() async {
@@ -113,20 +140,67 @@ class _HomePageState extends State<HomePage> {
     setState(() {});
   }
 
-  Future<void> _manualLogin() async {
+  Future<void> _manualLoginWithCaptcha() async {
     if (_loggingIn) return;
-    if (!_config.isValid) {
-      await _saveConfig();
-      if (!_config.isValid) return;
+    if (_captchaCookie.isEmpty || _captchaCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先刷新验证码并输入')),
+      );
+      return;
     }
+    await _saveConfig();
+    if (!_config.isValid) return;
+
     setState(() => _loggingIn = true);
-    _logs.insert(0, '${_timeNow()} 正在手动登录 (OCR 识别验证码)...');
-    final result = await _service.manualLogin();
+    _logs.insert(0, '${_timeNow()} 手动验证码登录中...');
+
+    final loginKey = generateLoginKey(
+      _config.username,
+      _config.password,
+      _captchaCtrl.text.trim(),
+    );
+
+    final result = await doPortalLogin(
+      baseUrl: _config.baseUrl,
+      loginKey: loginKey,
+      cookie: _captchaCookie,
+    );
+
     if (mounted) {
       setState(() {
         _logs.insert(0, '${_timeNow()} 结果: ${result.success ? "成功" : "失败"} - ${result.message}');
         _loggingIn = false;
       });
+      if (result.success) {
+        _service.lastLoginTime = DateTime.now();
+      }
+      _refreshCaptcha();
+    }
+  }
+
+  Future<void> _autoLoginTest() async {
+    if (_loggingIn) return;
+    await _saveConfig();
+    if (!_config.isValid) return;
+
+    setState(() => _loggingIn = true);
+    _logs.insert(0, '${_timeNow()} OCR 自动登录中 (最多8次重试)...');
+
+    final result = await autoLogin(
+      baseUrl: _config.baseUrl,
+      username: _config.username,
+      password: _config.password,
+    );
+
+    if (mounted) {
+      setState(() {
+        _logs.insert(0, '${_timeNow()} 结果: ${result.success ? "成功" : "失败"} - ${result.message}');
+        _loggingIn = false;
+      });
+      if (result.success) {
+        _service.lastLoginTime = DateTime.now();
+      }
+      _refreshCaptcha();
     }
   }
 
@@ -146,7 +220,7 @@ class _HomePageState extends State<HomePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('校园网自动登录'),
+        title: const Text('aiqin - 校园网自动登录'),
         centerTitle: true,
       ),
       body: SingleChildScrollView(
@@ -190,27 +264,17 @@ class _HomePageState extends State<HomePage> {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: _toggleService,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: running ? Colors.red : Colors.blue,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
-                            child: Text(running ? '停止服务' : '启动服务'),
-                          ),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _toggleService,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: running ? Colors.red : Colors.blue,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: running || _loggingIn ? null : _manualLogin,
-                            child: Text(_loggingIn ? '登录中...' : '手动登录'),
-                          ),
-                        ),
-                      ],
+                        child: Text(running ? '停止服务' : '启动服务'),
+                      ),
                     ),
                   ],
                 ),
@@ -229,6 +293,7 @@ class _HomePageState extends State<HomePage> {
                 isDense: true,
               ),
               enabled: !running,
+              onChanged: (_) => _refreshCaptcha(),
             ),
             const SizedBox(height: 8),
             Row(
@@ -259,6 +324,68 @@ class _HomePageState extends State<HomePage> {
                 ),
               ],
             ),
+            const SizedBox(height: 16),
+            const Text('验证码 & 登录测试',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                GestureDetector(
+                  onTap: _refreshCaptcha,
+                  child: Container(
+                    width: 140,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey),
+                      borderRadius: BorderRadius.circular(4),
+                      color: Colors.white,
+                    ),
+                    child: _captchaBytes != null
+                        ? Image.memory(_captchaBytes!, fit: BoxFit.fill)
+                        : const Center(child: Text('点我刷新', style: TextStyle(color: Colors.grey, fontSize: 12))),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('OCR识别: ${_ocrResult.isEmpty ? "无" : _ocrResult}',
+                          style: TextStyle(color: _ocrResult.length == 4 ? Colors.green : Colors.orange, fontSize: 13, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 4),
+                      TextField(
+                        controller: _captchaCtrl,
+                        decoration: const InputDecoration(
+                          labelText: '手动输入验证码',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        enabled: !running,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: running ? null : _refreshCaptcha,
+                  child: const Text('刷新'),
+                ),
+                TextButton(
+                  onPressed: (running || _loggingIn) ? null : _autoLoginTest,
+                  child: const Text('自动登录测试(OCR)'),
+                ),
+                TextButton(
+                  onPressed: (running || _loggingIn) ? null : _manualLoginWithCaptcha,
+                  child: const Text('手动登录测试'),
+                ),
+              ],
+            ),
             const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerRight,
@@ -272,7 +399,7 @@ class _HomePageState extends State<HomePage> {
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Container(
-              height: 240,
+              height: 220,
               width: double.infinity,
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
@@ -288,15 +415,15 @@ class _HomePageState extends State<HomePage> {
                       itemBuilder: (_, i) => Text(
                         _logs[_logs.length - 1 - i],
                         style: const TextStyle(
-                            color: Colors.greenAccent, fontSize: 12,
+                            color: Colors.greenAccent, fontSize: 11,
                             fontFamily: 'monospace'),
                       ),
                     ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             const Text(
-              '说明: 验证码自动 OCR 识别, 识别失败自动重试。每 90 分钟自动续期一次, 掉线自动重连。请将 App 加入电池优化白名单。',
-              style: TextStyle(color: Colors.grey, fontSize: 12),
+              '使用步骤: 1.填配置 2.点手动登录测试(验证RSA加密正确) 3.成功后再启动自动服务',
+              style: TextStyle(color: Colors.grey, fontSize: 11),
             ),
           ],
         ),
@@ -309,6 +436,7 @@ class _HomePageState extends State<HomePage> {
     _baseUrlCtrl.dispose();
     _userCtrl.dispose();
     _passCtrl.dispose();
+    _captchaCtrl.dispose();
     disposeOCR();
     super.dispose();
   }
