@@ -1,4 +1,4 @@
-﻿package com.wyu.esurfing;
+package com.wyu.esurfing;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
