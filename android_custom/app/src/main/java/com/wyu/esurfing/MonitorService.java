@@ -59,6 +59,9 @@ public class MonitorService extends Service {
     // 持续熄屏时，之后每 40 分钟重置一次。
     private static final long SCREEN_OFF_RESET_INTERVAL_MS = 40 * 60 * 1000L;
     private static final long CLIENT_RESTART_DELAY_MS = 800L;
+    // 熄屏重置时，启动广东校园后等待多久再把它压回后台。
+    // 给客户端留出初始化和触发连接的时间，熄屏状态下用户看不到，稍长也没关系。
+    private static final long SCREEN_OFF_RETURN_BACK_DELAY_MS = 10_000L;
     public static final String ACTION_FIRST_RESET =
             "com.wyu.esurfing.action.FIRST_SCREEN_OFF_RESET";
     public static final String ACTION_PERIODIC_RESET =
@@ -454,11 +457,34 @@ public class MonitorService extends Service {
                     launchClientOnly();
                     updateNotification("熄屏后台运行中");
                     logEvent("广东校园已重新启动");
+                    scheduleReturnToPreviousAppAfterReset();
                 } else {
                     logEvent("重启前检测到亮屏，取消本次启动");
                 }
             }
         }, CLIENT_RESTART_DELAY_MS);
+    }
+
+    /**
+     * 熄屏重置后，等客户端初始化完成，再把它压回后台。
+     * 这样亮屏时用户看到的仍是熄屏前的应用，而不是广东校园。
+     */
+    private void scheduleReturnToPreviousAppAfterReset() {
+        if (!ClientAccessibilityService.isRunning()) {
+            logEvent("无障碍未开启，熄屏重置后可能在亮屏时看到广东校园");
+            return;
+        }
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!screenOn) {
+                    boolean ok = ClientAccessibilityService.performBackNow();
+                    logEvent("熄屏重置完成，已尝试返回原应用：" + (ok ? "已发送" : "失败"));
+                } else {
+                    logEvent("返回执行前已亮屏，跳过本次返回，避免误操作");
+                }
+            }
+        }, SCREEN_OFF_RETURN_BACK_DELAY_MS);
     }
 
     private void killClient() {

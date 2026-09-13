@@ -1,4 +1,4 @@
-package com.wyu.esurfing;
+﻿package com.wyu.esurfing;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
@@ -30,6 +30,21 @@ public class ClientAccessibilityService extends AccessibilityService {
         return instance != null;
     }
 
+    /**
+     * 立刻发送一次全局返回键。
+     * 用于熄屏重置后把广东校园压回后台，让亮屏时用户仍看到之前的应用。
+     */
+    public static boolean performBackNow() {
+        if (instance == null) {
+            Log.d(TAG, "未启用无障碍，无法执行返回");
+            return false;
+        }
+        instance.handler.post(() -> {
+            boolean sent = instance.performGlobalAction(GLOBAL_ACTION_BACK);
+            Log.d(TAG, "主动执行返回，结果=" + sent);
+        });
+        return true;
+    }
     public static boolean requestReturnOnNextClientWindow() {
         if (instance == null) {
             returnOnNextClientWindow = false;
