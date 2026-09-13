@@ -359,9 +359,8 @@ public class MonitorService extends Service {
                     scheduleScreenOffTasks();
                 } else if (Intent.ACTION_SCREEN_ON.equals(intent.getAction())) {
                     screenOn = true;
-                    cancelScreenOffTasks();
-                    ClientAccessibilityService.cancelReloginFlow();
-                    logEvent("检测到亮屏，已取消熄屏重置任务");
+                    cancelAllPendingActions();
+                    logEvent("检测到亮屏，已取消所有后台待执行任务");
                     updateNotification("亮屏中，后台监测已开启");
                 }
             }
@@ -389,6 +388,18 @@ public class MonitorService extends Service {
     private void cancelScreenOffTasks() {
         cancelAlarm(ACTION_FIRST_RESET, FIRST_RESET_REQUEST);
         cancelAlarm(ACTION_PERIODIC_RESET, PERIODIC_RESET_REQUEST);
+    }
+
+    /**
+     * 亮屏时取消所有未完成的后台操作，防止用户亮屏后还看到强制跳转或返回。
+     * 包括：熄屏闹钟、无障碍点击流程、重启任务、返回任务等。
+     */
+    private void cancelAllPendingActions() {
+        cancelScreenOffTasks();
+        ClientAccessibilityService.cancelReloginFlow();
+        // 移除所有 handler 上的待执行任务（重启、返回等）
+        handler.removeCallbacksAndMessages(null);
+        logEvent("已取消所有待执行后台任务");
     }
 
     private long nextDailyTriggerAt(int hour, int minute) {
