@@ -2,7 +2,6 @@ package com.wyu.esurfing;
 
 import android.content.Intent;
 import android.provider.Settings;
-import androidx.annotation.NonNull;
 import io.flutter.embedding.android.FlutterActivity;
 import io.flutter.embedding.engine.FlutterEngine;
 import io.flutter.plugin.common.MethodChannel;
@@ -13,7 +12,7 @@ public class MainActivity extends FlutterActivity {
     static MethodChannel channel;
 
     @Override
-    public void configureFlutterEngine(@NonNull FlutterEngine flutterEngine) {
+    public void configureFlutterEngine(FlutterEngine flutterEngine) {
         super.configureFlutterEngine(flutterEngine);
         channel = new MethodChannel(flutterEngine.getDartExecutor().getBinaryMessenger(), CHANNEL);
         channel.setMethodCallHandler(

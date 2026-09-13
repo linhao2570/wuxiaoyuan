@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -55,8 +56,9 @@ class ClientAccessibilityService : AccessibilityService() {
         val root = rootInActiveWindow ?: return
         if (System.currentTimeMillis() - lastClickAt < 5000) return
 
-        val loginNode = findByText(root, "dianwodenglu")
-        val retryNode = findByText(root, "chongxinjiance")
+        // Button text placeholders; adjust based on actual client UI
+        val loginNode = findByText(root, "login")
+        val retryNode = findByText(root, "retry")
         val target = loginNode ?: retryNode
 
         if (target != null && target.isEnabled && target.isVisibleToUser) {
@@ -100,9 +102,12 @@ class ClientAccessibilityService : AccessibilityService() {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val net = cm.activeNetwork ?: return false
         val caps = cm.getNetworkCapabilities(net) ?: return false
-        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return false
+        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return false
+        }
+        return true
     }
 
     override fun onInterrupt() {}

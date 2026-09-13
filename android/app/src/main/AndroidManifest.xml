@@ -4,6 +4,11 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <queries>
+        <package android:name="com.cndatacom.campus.cdccportalgd" />
+    </queries>
+
     <application
         android:label="aiqin"
         android:name="${applicationName}"
