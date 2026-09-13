@@ -44,7 +44,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _init() async {
     final prefs = await SharedPreferences.getInstance();
     _autoStart = prefs.getBool('auto_start') ?? true;
-    _appendLog('app started');
+    _appendLog('应用已启动');
     if (_autoStart) {
       await _call('startMonitor');
     }
@@ -66,11 +66,30 @@ class _HomePageState extends State<HomePage> {
   Future<void> _call(String method) async {
     try {
       final result = await _channel.invokeMethod(method);
-      _appendLog('$method: ${result == true ? "ok" : result ?? "done"}');
+      final ok = result == true;
+      final label = _methodLabel(method);
+      _appendLog('$label：${ok ? '成功' : '已执行'}');
     } on PlatformException catch (e) {
-      _appendLog('$method failed: ${e.message ?? e.code}');
+      final label = _methodLabel(method);
+      _appendLog('$label失败：${e.message ?? e.code}');
     } catch (e) {
-      _appendLog('$method error: $e');
+      final label = _methodLabel(method);
+      _appendLog('$label异常：$e');
+    }
+  }
+
+  String _methodLabel(String method) {
+    switch (method) {
+      case 'startMonitor':
+        return '开启后台监测';
+      case 'stopMonitor':
+        return '停止后台监测';
+      case 'openClient':
+        return '打开广东校园';
+      case 'openAccessibility':
+        return '打开无障碍设置';
+      default:
+        return method;
     }
   }
 
@@ -84,7 +103,7 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('aiqin - Campus Helper'),
+        title: const Text('aiqin - 广东校园助手'),
         centerTitle: true,
       ),
       body: SingleChildScrollView(
@@ -94,7 +113,7 @@ class _HomePageState extends State<HomePage> {
           children: [
             const _StatusCard(),
             const SizedBox(height: 16),
-            const Text('Quick Actions',
+            const Text('快捷操作',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Wrap(
@@ -103,19 +122,19 @@ class _HomePageState extends State<HomePage> {
               children: [
                 _Btn(
                     icon: Icons.play_arrow,
-                    label: 'Start Monitor',
+                    label: '开启后台监测',
                     onTap: () => _call('startMonitor')),
                 _Btn(
                     icon: Icons.stop,
-                    label: 'Stop Monitor',
+                    label: '停止后台监测',
                     onTap: () => _call('stopMonitor')),
                 _Btn(
                     icon: Icons.open_in_new,
-                    label: 'Open Campus App',
+                    label: '打开广东校园',
                     onTap: () => _call('openClient')),
                 _Btn(
                     icon: Icons.accessibility_new,
-                    label: 'Open Accessibility',
+                    label: '开启无障碍权限',
                     onTap: () => _call('openAccessibility')),
               ],
             ),
@@ -126,12 +145,12 @@ class _HomePageState extends State<HomePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Settings',
+                    const Text('设置',
                         style: TextStyle(
                             fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     SwitchListTile(
-                      title: const Text('Auto start on launch'),
+                      title: const Text('启动时自动开启监测'),
                       value: _autoStart,
                       onChanged: _toggleAutoStart,
                     ),
@@ -140,7 +159,7 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
             const SizedBox(height: 16),
-            const Text('Log',
+            const Text('运行日志',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Container(
@@ -152,7 +171,7 @@ class _HomePageState extends State<HomePage> {
                 borderRadius: BorderRadius.circular(4),
               ),
               child: _logs.isEmpty
-                  ? const Text('no log yet',
+                  ? const Text('暂无日志',
                       style: TextStyle(color: Colors.grey, fontSize: 12))
                   : ListView.builder(
                       reverse: true,
@@ -168,7 +187,7 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 12),
             const Text(
-              'This app only assists the official campus client via system accessibility. For personal use only.',
+              '说明：本应用仅作为广东校园客户端的辅助工具，通过系统无障碍服务识别并点击页面中的登录按钮。仅限个人自用，请遵守校园网使用规定。',
               style: TextStyle(color: Colors.grey, fontSize: 12, height: 1.5),
             ),
           ],
@@ -201,12 +220,12 @@ class _StatusCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Background Monitor',
+                  Text('后台监测',
                       style: TextStyle(
                           fontSize: 16, fontWeight: FontWeight.bold)),
                   SizedBox(height: 4),
                   Text(
-                    'Tap Start Monitor and enable accessibility.',
+                    '点击「开启后台监测」并开启无障碍权限后即可使用。',
                     style: TextStyle(color: Colors.grey, fontSize: 12),
                   ),
                 ],
