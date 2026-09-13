@@ -558,12 +558,27 @@ public class MonitorService extends Service {
      * 由无障碍服务在广东校园窗口出现的第一个事件中立即执行返回。
      */
     private void launchClientAndReturnImmediately() {
-        boolean canReturn = ClientAccessibilityService.requestReturnOnNextClientWindow();
-        logEvent("互联网不可用，立即拉起广东校园并准备返回原页面");
-        if (!canReturn) {
-            logEvent("无障碍未开启，广东校园可能无法自动返回原页面");
+        // 记录当前前台应用（如果能获取到）
+        String before = getCurrentForegroundPackage();
+        if (before != null && !ClientAccessibilityService.CLIENT_PACKAGE.equals(before)) {
+            lastForegroundPackage = before;
+            logEvent("启动前前台应用：" + before);
         }
+        logEvent("互联网不可用，立即拉起广东校园");
         launchClientOnly();
+        // 给客户端一点时间启动，然后恢复原应用
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                boolean restored = restoreLastForegroundApp();
+                if (!restored) {
+                    goHome();
+                    logEvent("恢复原应用失败，Home 兜底");
+                } else {
+                    logEvent("已返回原应用");
+                }
+            }
+        }, 1_500L);
     }
 
     private void launchClientOnly() {
@@ -612,7 +627,9 @@ public class MonitorService extends Service {
                 } else {
                     logEvent("熄屏重置：执行前已亮屏，取消");
                     ClientAccessibilityService.cancelReloginFlow();
-                    ClientAccessibilityService.performBackNow(3);
+                    if (!restoreLastForegroundApp()) {
+                        goHome();
+                    }
                 }
             }
         }, START_RELOGIN_DELAY_MS);
@@ -623,7 +640,9 @@ public class MonitorService extends Service {
             public void run() {
                 logEvent("熄屏重置：流程超时兜底，强制返回原应用");
                 ClientAccessibilityService.cancelReloginFlow();
-                ClientAccessibilityService.performBackNow(3);
+                if (!restoreLastForegroundApp()) {
+                        goHome();
+                    }
                 updateNotification("熄屏后台运行中");
             }
         }, SCREEN_OFF_RELOGIN_TIMEOUT_MS);
@@ -658,7 +677,9 @@ public class MonitorService extends Service {
                         updateNotification("熄屏后台运行中");
                     } else {
                         logEvent("重启前已亮屏，取消");
-                        ClientAccessibilityService.performBackNow(3);
+                        if (!restoreLastForegroundApp()) {
+                        goHome();
+                    }
                     }
                 }
             }, CLIENT_RESTART_DELAY_MS);
@@ -672,49 +693,25 @@ public class MonitorService extends Service {
      * 等待时间 2 秒：给客户端刚启动时的初始化和连接发起留一点时间。
      */
     private void scheduleReturnToPreviousAppAfterReset() {
-        // 第一波：300ms 后直接用 Home Intent 压回桌面。
-        // 这是最稳的兜底，不需要无障碍权限，熄屏下也 100% 能执行。
-        handler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (!screenOn) {
-                    goHome();
-                    logEvent("熄屏重置：第 1 波压回（Home Intent）");
-                }
-            }
-        }, 300L);
-        // 第二波：1 秒后用无障碍再补一轮（返回键 + Home 键），防止 Home Intent 不够
-        if (ClientAccessibilityService.isRunning()) {
-            handler.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    if (!screenOn) {
-                        ClientAccessibilityService.performBackNow(3);
-                        logEvent("熄屏重置：第 2 波压回（无障碍返回键 + Home 兜底）");
-                    }
-                }
-            }, 1_000L);
-        } else {
-            logEvent("无障碍未开启，仅使用 Home Intent 压回");
-        }
-        // 第三波：2 秒后尝试恢复熄屏前的前台应用（需要使用情况访问权限）
+        // 最强兜底：先尝试恢复熄屏前的前台应用（需要使用情况访问权限）。
+        // 失败再用 Home Intent 回到桌面，确保不会停在广东校园。
+        // 等待 1.5 秒，给客户端启动留一点时间。
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
                 if (!screenOn) {
                     boolean restored = restoreLastForegroundApp();
-                    if (!restored) {
-                        // 恢复失败再用 Home 兜底
-                        goHome();
-                        logEvent("熄屏重置：第 3 波压回（恢复失败，Home 兜底）");
+                    if (restored) {
+                        logEvent("已恢复到熄屏前的应用");
                     } else {
-                        logEvent("熄屏重置：第 3 波压回（已恢复熄屏前台应用）");
+                        goHome();
+                        logEvent("未能恢复原应用，Home 兜底");
                     }
                 } else {
-                    logEvent("返回执行前已亮屏，跳过本次返回");
+                    logEvent("返回执行前已亮屏，跳过");
                 }
             }
-        }, 2_500L);
+        }, 1_500L);
     }
 
     /**
