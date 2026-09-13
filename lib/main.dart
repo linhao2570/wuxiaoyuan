@@ -37,7 +37,6 @@ class _HomePageState extends State<HomePage> {
   bool _monitorRunning = false;
   bool _wifiOk = false;
   bool _accessibilityOk = false;
-  bool _autoStart = true;
   final _logs = <String>[];
 
   Timer? _statusTimer;
@@ -50,16 +49,15 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _init() async {
     final prefs = await SharedPreferences.getInstance();
-    _autoStart = prefs.getBool('auto_start') ?? true;
+    final autoStart = prefs.getBool('auto_start') ?? true;
     _appendLog('应用已启动');
     await _refreshStatus();
 
-    if (_autoStart && !_monitorRunning) {
+    if (autoStart && !_monitorRunning) {
       await _startMonitor();
     }
 
-    // Refresh status every 5 seconds
-    _statusTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+    _statusTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       _refreshStatus();
     });
 
@@ -77,7 +75,7 @@ class _HomePageState extends State<HomePage> {
         });
       }
     } catch (_) {
-      // Ignore if channel not ready yet
+      // Channel not ready yet, will retry
     }
   }
 
@@ -98,9 +96,7 @@ class _HomePageState extends State<HomePage> {
       final result = await _channel.invokeMethod('startMonitor');
       final ok = result == true;
       _appendLog('开启后台监测：${ok ? '成功' : '已执行'}');
-      if (ok) {
-        setState(() => _monitorRunning = true);
-      }
+      if (ok) setState(() => _monitorRunning = true);
     } on PlatformException catch (e) {
       _appendLog('开启失败：${e.message ?? e.code}');
     } catch (e) {
@@ -111,7 +107,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _stopMonitor() async {
     try {
-      final result = await _channel.invokeMethod('stopMonitor');
+      await _channel.invokeMethod('stopMonitor');
       _appendLog('已停止后台监测');
       setState(() => _monitorRunning = false);
     } on PlatformException catch (e) {
@@ -129,12 +125,6 @@ class _HomePageState extends State<HomePage> {
     } catch (e) {
       _appendLog('打开失败：$e');
     }
-  }
-
-  Future<void> _toggleAutoStart(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('auto_start', value);
-    setState(() => _autoStart = value);
   }
 
   @override
@@ -161,9 +151,6 @@ class _HomePageState extends State<HomePage> {
               accessibilityOk: _accessibilityOk,
             ),
             const SizedBox(height: 16),
-            const Text('操作',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
@@ -174,8 +161,10 @@ class _HomePageState extends State<HomePage> {
                   foregroundColor: Colors.white,
                 ),
                 icon: Icon(_monitorRunning ? Icons.stop : Icons.play_arrow),
-                label: Text(_monitorRunning ? '停止后台监测' : '开启后台监测',
-                    style: const TextStyle(fontSize: 16)),
+                label: Text(
+                  _monitorRunning ? '停止后台监测' : '开启后台监测',
+                  style: const TextStyle(fontSize: 16),
+                ),
               ),
             ),
             const SizedBox(height: 8),
@@ -193,15 +182,19 @@ class _HomePageState extends State<HomePage> {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('设置',
+                  children: const [
+                    Text('工作原理',
                         style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 8),
-                    SwitchListTile(
-                      title: const Text('启动时自动开启监测'),
-                      value: _autoStart,
-                      onChanged: _toggleAutoStart,
+                            fontSize: 16, fontWeight: FontWeight.bold)),
+                    SizedBox(height: 8),
+                    Text(
+                      '启动后自动监测网络。掉线时自动拉起广东校园客户端，利用其启动时自动连接的特性保活。定时重启客户端防止掉线。无障碍服务辅助点击登录按钮。',
+                      style: TextStyle(color: Colors.grey, fontSize: 12, height: 1.5),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      '前 1 分钟每 5 秒检测一次，之后每 5 分钟重置一次客户端。',
+                      style: TextStyle(color: Colors.grey, fontSize: 12, height: 1.5),
                     ),
                   ],
                 ),
@@ -212,7 +205,7 @@ class _HomePageState extends State<HomePage> {
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Container(
-              height: 200,
+              height: 180,
               width: double.infinity,
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
@@ -236,7 +229,7 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 12),
             const Text(
-              '说明：本应用仅作为广东校园客户端的辅助工具，通过系统无障碍服务识别并点击页面中的登录按钮。每次掉线重连时客户端会短暂出现在前台，点完后自动返回桌面。仅限个人自用，请遵守校园网使用规定。',
+              '提示：无法完全静默操作另一个 App，每次重连时广东校园会短暂出现在前台，连接成功后自动返回桌面。仅限个人自用。',
               style: TextStyle(color: Colors.grey, fontSize: 12, height: 1.5),
             ),
           ],
@@ -264,12 +257,19 @@ class _StatusCard extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            _statusRow('网络状态', wifiOk ? '已连接' : '未连接', wifiOk ? Colors.green : Colors.red),
-            const SizedBox(height: 8),
-            _statusRow('后台监测', monitorRunning ? '运行中' : '未启动',
+            _statusRow(
+                'WiFi 网络',
+                wifiOk ? '已连接' : '未连接',
+                wifiOk ? Colors.green : Colors.red),
+            const SizedBox(height: 10),
+            _statusRow(
+                '后台监测',
+                monitorRunning ? '运行中' : '未启动',
                 monitorRunning ? Colors.green : Colors.grey),
-            const SizedBox(height: 8),
-            _statusRow('无障碍权限', accessibilityOk ? '已开启' : '未开启',
+            const SizedBox(height: 10),
+            _statusRow(
+                '无障碍权限',
+                accessibilityOk ? '已开启' : '未开启',
                 accessibilityOk ? Colors.green : Colors.orange),
           ],
         ),
@@ -294,7 +294,8 @@ class _StatusCard extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Text(value,
-                style: TextStyle(fontSize: 14, color: color, fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    fontSize: 14, color: color, fontWeight: FontWeight.bold)),
           ],
         ),
       ],

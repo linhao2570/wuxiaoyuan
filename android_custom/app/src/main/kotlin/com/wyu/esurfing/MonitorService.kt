@@ -1,10 +1,9 @@
 package com.wyu.esurfing
 
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.Service
-import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -25,12 +24,13 @@ class MonitorService : Service() {
         private const val CHANNEL_ID = "aiqin_monitor"
         private const val NOTIFICATION_ID = 1001
 
-        // Phase 1: first 2 minutes, check every 10 seconds
-        private const val PHASE1_DURATION_MS = 2 * 60 * 1000L
-        private const val PHASE1_INTERVAL_MS = 10 * 1000L
+        // Phase 1: first 1 minute, check every 5 seconds
+        private const val PHASE1_DURATION_MS = 60 * 1000L
+        private const val PHASE1_INTERVAL_MS = 5 * 1000L
 
-        // Phase 2: every 90 minutes
-        private const val PHASE2_INTERVAL_MS = 90 * 60 * 1000L
+        // Phase 2: reset every 5 minutes (for testing)
+        // Later change to 90 minutes
+        private const val PHASE2_INTERVAL_MS = 5 * 60 * 1000L
 
         private var running = false
         fun isRunning(): Boolean = running
@@ -38,7 +38,7 @@ class MonitorService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var startTime = 0L
-    private var lastCheck = 0L
+    private var lastReset = 0L
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     private val checkRunnable = object : Runnable {
@@ -90,21 +90,85 @@ class MonitorService : Service() {
     }
 
     private fun doCheck() {
-        lastCheck = System.currentTimeMillis()
-        if (wifiValidated()) {
+        val elapsed = System.currentTimeMillis() - startTime
+        val phase = if (elapsed < PHASE1_DURATION_MS) "phase1" else "phase2"
+        Log.d(TAG, "checking ($phase)")
+
+        val wifiOk = wifiValidated()
+        if (wifiOk) {
             Log.d(TAG, "WiFi validated, no action needed")
-            updateNotification("network OK")
+            updateNotification("网络正常")
             return
         }
 
-        Log.d(TAG, "WiFi not validated, checking client status")
-        updateNotification("reconnecting...")
+        updateNotification("重连中...")
+        Log.d(TAG, "WiFi not validated, starting reconnect flow")
 
-        if (isClientRunning()) {
-            Log.d(TAG, "client already running, accessibility service should handle it")
-        } else {
-            Log.d(TAG, "client not running, launching it")
+        val clientRunning = isClientRunning()
+        Log.d(TAG, "client running: $clientRunning")
+
+        if (!clientRunning) {
+            // Client not running -> launch it, it will auto-connect
+            Log.d(TAG, "launching client (not running)")
             launchClient()
+        } else {
+            // Client running but no network -> accessibility should handle it
+            // Or we can force a reset by killing and relaunching
+            val timeSinceLastReset = System.currentTimeMillis() - lastReset
+            if (timeSinceLastReset > 60 * 1000L) {
+                Log.d(TAG, "client running but no network, doing reset")
+                resetClient()
+            } else {
+                Log.d(TAG, "reset cooldown, waiting for accessibility to handle")
+            }
+        }
+    }
+
+    private fun resetClient() {
+        lastReset = System.currentTimeMillis()
+        Log.d(TAG, "=== reset client ===")
+        // Kill the client
+        killClient()
+        // Wait a moment then relaunch
+        handler.postDelayed({
+            launchClient()
+            Log.d(TAG, "client relaunched")
+        }, 1500L)
+        // After another delay, try to return home
+        handler.postDelayed({
+            returnHome()
+        }, 8000L)
+    }
+
+    private fun killClient() {
+        try {
+            val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            am.killBackgroundProcesses(ClientAccessibilityService.CLIENT_PACKAGE)
+            Log.d(TAG, "killed client background processes")
+        } catch (e: Exception) {
+            Log.d(TAG, "kill client failed: ${e.message}")
+        }
+    }
+
+    private fun launchClient() {
+        val intent = packageManager.getLaunchIntentForPackage(ClientAccessibilityService.CLIENT_PACKAGE)
+        if (intent != null) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            startActivity(intent)
+            Log.d(TAG, "launched Guangdong Campus client")
+        } else {
+            Log.d(TAG, "client not found")
+        }
+    }
+
+    private fun returnHome() {
+        val home = Intent(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_HOME)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        startActivity(home)
+        Log.d(TAG, "returned home")
+        if (wifiValidated()) {
+            updateNotification("网络正常")
         }
     }
 
@@ -128,7 +192,6 @@ class MonitorService : Service() {
                 return true
             }
         }
-        // Also check running services as a fallback
         @Suppress("DEPRECATION")
         for (service in am.getRunningServices(64)) {
             if (service.service.packageName == ClientAccessibilityService.CLIENT_PACKAGE) {
@@ -136,17 +199,6 @@ class MonitorService : Service() {
             }
         }
         return false
-    }
-
-    private fun launchClient() {
-        val intent = packageManager.getLaunchIntentForPackage(ClientAccessibilityService.CLIENT_PACKAGE)
-        if (intent != null) {
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(intent)
-            Log.d(TAG, "launched Guangdong Campus client")
-        } else {
-            Log.d(TAG, "client not found")
-        }
     }
 
     private fun createNotificationChannel() {

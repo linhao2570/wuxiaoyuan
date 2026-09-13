@@ -17,11 +17,10 @@ class ClientAccessibilityService : AccessibilityService() {
         private var instance: ClientAccessibilityService? = null
         fun isRunning(): Boolean = instance != null
 
-        // Button texts - adjust based on actual client UI
-        // We search for partial text matches
-        private const val TEXT_LOGIN = "点我登录"
-        private const val TEXT_RETRY = "重新检测"
-        private const val TEXT_DISCONNECT = "断开连接"
+        // Button texts from actual app screenshots
+        private const val BTN_LOGIN = "点我登录"
+        private const val BTN_RETRY = "重新检测"
+        private const val BTN_DISCONNECT = "断开网络"
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -46,15 +45,15 @@ class ClientAccessibilityService : AccessibilityService() {
 
         if (System.currentTimeMillis() - lastClickAt < 5000) return
 
-        // Detect state
-        val hasLogin = hasVisibleText(root, TEXT_LOGIN)
-        val hasRetry = hasVisibleText(root, TEXT_RETRY)
-        val hasDisconnect = hasVisibleText(root, TEXT_DISCONNECT)
+        // Detect current state
+        val hasLogin = hasVisibleText(root, BTN_LOGIN)
+        val hasRetry = hasVisibleText(root, BTN_RETRY)
+        val hasDisconnect = hasVisibleText(root, BTN_DISCONNECT)
 
         val state = when {
+            hasDisconnect -> "connected"
             hasLogin -> "need_login"
             hasRetry -> "need_retry"
-            hasDisconnect -> "connected"
             else -> "unknown"
         }
 
@@ -65,22 +64,23 @@ class ClientAccessibilityService : AccessibilityService() {
 
         when (state) {
             "need_login" -> {
-                clickFirstVisible(root, TEXT_LOGIN)
-                lastClickAt = System.currentTimeMillis()
-                Log.d(TAG, "clicked login button")
-                // Return home after a delay if network comes back
-                handler.postDelayed({ maybeReturnHome() }, 4000L)
+                if (clickFirstVisible(root, BTN_LOGIN)) {
+                    lastClickAt = System.currentTimeMillis()
+                    Log.d(TAG, "clicked: $BTN_LOGIN")
+                    handler.postDelayed({ returnHome() }, 4000L)
+                }
             }
             "need_retry" -> {
-                clickFirstVisible(root, TEXT_RETRY)
-                lastClickAt = System.currentTimeMillis()
-                Log.d(TAG, "clicked retry button")
-                handler.postDelayed({ maybeReturnHome() }, 4000L)
+                if (clickFirstVisible(root, BTN_RETRY)) {
+                    lastClickAt = System.currentTimeMillis()
+                    Log.d(TAG, "clicked: $BTN_RETRY")
+                    handler.postDelayed({ returnHome() }, 4000L)
+                }
             }
             "connected" -> {
-                // Already connected, just go back to home
+                // Already connected, go back home
                 Log.d(TAG, "already connected, returning home")
-                maybeReturnHome()
+                returnHome()
             }
             else -> {
                 // Unknown state, do nothing
@@ -88,12 +88,12 @@ class ClientAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun maybeReturnHome() {
-        Log.d(TAG, "returning to home screen")
+    private fun returnHome() {
         val home = Intent(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_HOME)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(home)
+        Log.d(TAG, "returned home")
     }
 
     private fun hasVisibleText(root: AccessibilityNodeInfo, text: String): Boolean {
