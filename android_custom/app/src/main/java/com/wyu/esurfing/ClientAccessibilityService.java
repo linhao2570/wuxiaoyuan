@@ -149,23 +149,45 @@ public class ClientAccessibilityService extends AccessibilityService {
         return performBackNow(BACK_ATTEMPTS);
     }
 
+    /**
+     * 多级兜底返回，尽力把广东校园压回后台。
+     * 顺序：多次返回键 -> Home 键 -> 最近应用键
+     * 任何一级成功后，亮屏时用户都不会停留在广东校园。
+     */
     public static boolean performBackNow(int maxAttempts) {
         ClientAccessibilityService svc = instance;
         if (svc == null) {
             Log.d(TAG, "未启用无障碍，无法执行返回");
             return false;
         }
-        final int attempts = Math.max(1, Math.min(maxAttempts, 6));
+        final int backAttempts = Math.max(1, Math.min(maxAttempts, 6));
         svc.handler.post(new Runnable() {
-            private int remaining = attempts;
+            private int phase = 0; // 0=back, 1=home, 2=recents
+            private int backCount = backAttempts;
+
             @Override
             public void run() {
-                if (remaining <= 0) return;
-                boolean sent = svc.performGlobalAction(GLOBAL_ACTION_BACK);
-                Log.d(TAG, "主动执行返回，剩余次数=" + remaining + "，结果=" + sent);
-                remaining--;
-                if (remaining > 0) {
-                    svc.handler.postDelayed(this, BACK_INTERVAL_MS);
+                boolean sent = false;
+                switch (phase) {
+                    case 0:
+                        sent = svc.performGlobalAction(GLOBAL_ACTION_BACK);
+                        Log.d(TAG, "返回策略：返回键，剩余=" + backCount + "，结果=" + sent);
+                        backCount--;
+                        if (backCount <= 0) {
+                            phase = 1;
+                        }
+                        svc.handler.postDelayed(this, BACK_INTERVAL_MS);
+                        break;
+                    case 1:
+                        sent = svc.performGlobalAction(GLOBAL_ACTION_HOME);
+                        Log.d(TAG, "返回策略：Home 键兜底，结果=" + sent);
+                        phase = 2;
+                        svc.handler.postDelayed(this, BACK_INTERVAL_MS);
+                        break;
+                    case 2:
+                        // Home 应该已经够了，最近应用这里只留作记录，不再继续
+                        Log.d(TAG, "返回策略：已完成所有兜底动作");
+                        break;
                 }
             }
         });

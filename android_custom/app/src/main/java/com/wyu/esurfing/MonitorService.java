@@ -664,21 +664,59 @@ public class MonitorService extends Service {
      * 等待时间 2 秒：给客户端刚启动时的初始化和连接发起留一点时间。
      */
     private void scheduleReturnToPreviousAppAfterReset() {
-        if (!ClientAccessibilityService.isRunning()) {
-            logEvent("无障碍未开启，熄屏重置后可能在亮屏时看到广东校园");
-            return;
-        }
+        // 第一波：300ms 后直接用 Home Intent 压回桌面。
+        // 这是最稳的兜底，不需要无障碍权限，熄屏下也 100% 能执行。
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
                 if (!screenOn) {
-                    boolean ok = ClientAccessibilityService.performBackNow(3);
-                    logEvent("熄屏重置完成，已尝试返回原应用：" + (ok ? "已发送" : "失败"));
-                } else {
-                    logEvent("返回执行前已亮屏，跳过本次返回，避免误操作");
+                    goHome();
+                    logEvent("熄屏重置：第 1 波压回（Home Intent）");
                 }
             }
-        }, 2_000L);
+        }, 300L);
+        // 第二波：1 秒后用无障碍再补一轮（返回键 + Home 键），防止 Home Intent 不够
+        if (ClientAccessibilityService.isRunning()) {
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (!screenOn) {
+                        ClientAccessibilityService.performBackNow(3);
+                        logEvent("熄屏重置：第 2 波压回（无障碍返回键 + Home 兜底）");
+                    }
+                }
+            }, 1_000L);
+        } else {
+            logEvent("无障碍未开启，仅使用 Home Intent 压回");
+        }
+        // 第三波：3 秒后再来一次 Home Intent，双重保险
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!screenOn) {
+                    goHome();
+                    logEvent("熄屏重置：第 3 波压回（二次 Home 兜底）");
+                } else {
+                    logEvent("返回执行前已亮屏，跳过本次返回");
+                }
+            }
+        }, 3_000L);
+    }
+
+    /**
+     * 直接发送 Home Intent，回到桌面。
+     * 不需要无障碍权限，熄屏下也能执行，是最可靠的压回方式。
+     * 缺点是回到桌面而不是用户之前的 App，但总比停在广东校园好。
+     */
+    private void goHome() {
+        try {
+            Intent home = new Intent(Intent.ACTION_MAIN);
+            home.addCategory(Intent.CATEGORY_HOME);
+            home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(home);
+        } catch (Exception e) {
+            logEvent("发送 Home Intent 失败：" + e.getClass().getSimpleName());
+        }
     }
 
     private void killClient() {
