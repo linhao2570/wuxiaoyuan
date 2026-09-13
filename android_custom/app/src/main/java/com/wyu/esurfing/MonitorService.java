@@ -59,9 +59,11 @@ public class MonitorService extends Service {
     // 持续熄屏时，之后每 40 分钟重置一次。
     private static final long SCREEN_OFF_RESET_INTERVAL_MS = 40 * 60 * 1000L;
     private static final long CLIENT_RESTART_DELAY_MS = 800L;
-    // 熄屏重置时，启动广东校园后等待多久再把它压回后台。
-    // 给客户端留出初始化和触发连接的时间，熄屏状态下用户看不到，稍长也没关系。
-    private static final long SCREEN_OFF_RETURN_BACK_DELAY_MS = 10_000L;
+    // 熄屏重登流程总时间上限（拉起页面 + 断网 + 等待登录按钮 + 登录 + 返回）。
+    // 页面刷新、登录连接需要时间，这里给到 40 秒，超时会自动返回。
+    private static final long SCREEN_OFF_RELOGIN_TIMEOUT_MS = 40_000L;
+    // 拉起客户端后，给页面渲染留一点时间再启动重登流程。
+    private static final long START_RELOGIN_DELAY_MS = 2_000L;
     public static final String ACTION_FIRST_RESET =
             "com.wyu.esurfing.action.FIRST_SCREEN_OFF_RESET";
     public static final String ACTION_PERIODIC_RESET =
@@ -350,6 +352,7 @@ public class MonitorService extends Service {
                 } else if (Intent.ACTION_SCREEN_ON.equals(intent.getAction())) {
                     screenOn = true;
                     cancelScreenOffTasks();
+                    ClientAccessibilityService.cancelReloginFlow();
                     logEvent("检测到亮屏，已取消熄屏重置任务");
                     updateNotification("亮屏中，后台监测已开启");
                 }
@@ -487,9 +490,8 @@ public class MonitorService extends Service {
         updateNotification("后台监测已开启");
         scheduleNextNightStopAlarm();
         if (!screenOn) {
-            logEvent("早晨恢复时处于熄屏，后台启动广东校园并压回");
-            launchClientOnly();
-            scheduleReturnToPreviousAppAfterReset();
+            logEvent("早晨恢复时处于熄屏，执行一次重登流程");
+            resetClientInBackground();
         }
     }
 
@@ -572,45 +574,89 @@ public class MonitorService extends Service {
         }
     }
 
+    /**
+     * 熄屏重置：拉起广东校园，由无障碍服务执行“断开网络 → 点我登录”的完整重登。
+     * 不再杀进程，避免客户端被杀后后台状态丢失导致连不上。
+     *
+     * 流程：
+     *   拉起广东校园 -> 等 2 秒让页面渲染 -> 启动无障碍重登状态机
+     *   -> 点断开网络 -> 等约 15 秒 -> 点点我登录 -> 等几秒连接 -> 返回原应用
+     *
+     * 如果中途亮屏，立刻取消重登流程并返回原应用。
+     */
     private void resetClientInBackground() {
+        if (!ClientAccessibilityService.isRunning()) {
+            logEvent("无障碍未开启，无法执行熄屏重登流程");
+            updateNotification("需开启无障碍才能自动重登");
+            return;
+        }
         updateNotification("正在后台重置广东校园");
-        killClient();
+        logEvent("熄屏重置：准备启动广东校园并点击断开网络");
+        launchClientOnly();
+
+        // 等客户端启动完成后，触发无障碍只点断开
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
                 if (!screenOn) {
-                    launchClientOnly();
-                    updateNotification("熄屏后台运行中");
-                    logEvent("广东校园已重新启动");
-                    scheduleReturnToPreviousAppAfterReset();
+                    boolean started = ClientAccessibilityService.startDisconnectOnly();
+                    logEvent("熄屏重置：已触发无障碍点断开网络，结果=" + started);
                 } else {
-                    logEvent("重启前检测到亮屏，取消本次启动");
+                    logEvent("熄屏重置：执行前已亮屏，取消");
+                    ClientAccessibilityService.cancelReloginFlow();
+                    ClientAccessibilityService.performBackNow(3);
                 }
             }
-        }, CLIENT_RESTART_DELAY_MS);
+        }, START_RELOGIN_DELAY_MS);
+
+        // 超时兜底：如果一直没回调，强制返回原应用
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                logEvent("熄屏重置：流程超时兜底，强制返回原应用");
+                ClientAccessibilityService.cancelReloginFlow();
+                ClientAccessibilityService.performBackNow(3);
+                updateNotification("熄屏后台运行中");
+            }
+        }, SCREEN_OFF_RELOGIN_TIMEOUT_MS);
     }
 
     /**
-     * 熄屏重置后，等客户端初始化完成，再把它压回后台。
-     * 这样亮屏时用户看到的仍是熄屏前的应用，而不是广东校园。
+     * 被无障碍服务回调：断开网络按钮已点击成功。
+     * 接下来我们杀进程，重新启动客户端，达到真正重置的效果。
      */
-    private void scheduleReturnToPreviousAppAfterReset() {
-        if (!ClientAccessibilityService.isRunning()) {
-            logEvent("无障碍未开启，熄屏重置后可能在亮屏时看到广东校园");
-            return;
-        }
-        handler.postDelayed(new Runnable() {
+    public static void onDisconnectClicked() {
+        MonitorService svc = instance;
+        if (svc == null) return;
+        svc.handler.post(new Runnable() {
             @Override
             public void run() {
-                if (!screenOn) {
-                    boolean ok = ClientAccessibilityService.performBackNow(3);
-                    logEvent("熄屏重置完成，已尝试返回原应用：" + (ok ? "已发送" : "失败"));
-                } else {
-                    logEvent("返回执行前已亮屏，跳过本次返回，避免误操作");
-                }
+                svc.doKillAndRelaunch();
             }
-        }, SCREEN_OFF_RETURN_BACK_DELAY_MS);
+        });
     }
+
+    private void doKillAndRelaunch() {
+        if (!screenOn) {
+            logEvent("已断开网络，正在杀进程并重启广东校园");
+            killClient();
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (!screenOn) {
+                        launchClientOnly();
+                        logEvent("广东校园已重启，等待连接后压回后台");
+                        scheduleReturnToPreviousAppAfterReset();
+                        updateNotification("熄屏后台运行中");
+                    } else {
+                        logEvent("重启前已亮屏，取消");
+                        ClientAccessibilityService.performBackNow(3);
+                    }
+                }
+            }, CLIENT_RESTART_DELAY_MS);
+        }
+    }
+
 
     private void killClient() {
         try {

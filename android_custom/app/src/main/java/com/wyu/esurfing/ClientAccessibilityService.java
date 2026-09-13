@@ -6,64 +6,61 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+
+import java.util.List;
 
 /**
- * 只做一件事：aiqin 亮屏恢复流程启动广东校园后，
- * 广东校园窗口一出现就发送一次返回键，回到用户原来使用的页面。
+ * 小型无障碍辅助服务，只关注“广东校园”客户端。
  *
- * Android 普通后台 Service 没有可靠的“返回上一个 App”接口，
- * 所以这个小型无障碍服务是必要的系统能力适配。
- * 它不会扫描其它应用，也不会自动点击账号、密码或验证码。
+ * 功能分两类：
+ * 1. 亮屏快速恢复：拉起广东校园后，页面一出现就立刻返回，让用户回到原应用。
+ * 2. 熄屏重登流程：检测到“断开网络”就点断网，等约 15 秒后出现“点我登录”再点登录，
+ *    登录完成后再把应用压回后台。
+ *
+ * 不会读取账号密码，也不会扫描其它应用，所有操作等价于手动点击。
  */
 public class ClientAccessibilityService extends AccessibilityService {
 
     public static final String CLIENT_PACKAGE = "com.cndatacom.campus.cdccportalgd";
     private static final String TAG = "aiqin-access";
 
+    // 页面上的按钮文案，直接从截图里取。
+    private static final String BTN_DISCONNECT = "断开网络";
+    private static final String BTN_LOGIN = "点我登录";
+
+    // 熄屏重登流程的状态。
+    private static final int STATE_IDLE = 0;
+    private static final int STATE_WAIT_DISCONNECT = 1;
+    private static final int STATE_WAIT_LOGIN_BUTTON = 2;
+    private static final int STATE_WAIT_LOGIN_DONE = 3;
+
+    // 点击断网后，最多等多久让“点我登录”出现。
+    private static final long WAIT_LOGIN_BUTTON_MS = 20_000L;
+    // 点击登录后，给连接留出的时间，然后再压回后台。
+    private static final long AFTER_LOGIN_BACK_DELAY_MS = 8_000L;
+    // 返回键连发次数，确保回到原应用。
+    private static final int BACK_ATTEMPTS = 3;
+    // 返回键连发间隔。
+    private static final long BACK_INTERVAL_MS = 600L;
+
     private static volatile ClientAccessibilityService instance;
     private static volatile boolean returnOnNextClientWindow;
 
+    // 重登流程相关，都在主线程 handler 上操作。
+    private int flowState = STATE_IDLE;
+    private long flowStartedAt;
+    private boolean flowShouldReturnAfter = true;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private long lastReturnAt;
+    private long lastClickAt;
 
     public static boolean isRunning() {
         return instance != null;
     }
 
     /**
-     * 立刻发送一次全局返回键。
-     * 用于熄屏重置后把广东校园压回后台，让亮屏时用户仍看到之前的应用。
+     * 亮屏恢复时用：广东校园窗口一出现就立刻返回。
      */
-    public static boolean performBackNow() {
-        return performBackNow(1);
-    }
-
-    /**
-     * 连续发送若干次返回键。
-     * 广东校园可能有多个 Activity 栈，一次返回不一定能立刻回到原应用，
-     * 所以最多尝试 maxAttempts 次，每次间隔一小段时间。
-     */
-    public static boolean performBackNow(int maxAttempts) {
-        if (instance == null) {
-            Log.d(TAG, "未启用无障碍，无法执行返回");
-            return false;
-        }
-        final int attempts = Math.max(1, Math.min(maxAttempts, 4));
-        instance.handler.post(new Runnable() {
-            private int remaining = attempts;
-            @Override
-            public void run() {
-                if (remaining <= 0) return;
-                boolean sent = instance.performGlobalAction(GLOBAL_ACTION_BACK);
-                Log.d(TAG, "主动执行返回，剩余次数=" + remaining + "，结果=" + sent);
-                remaining--;
-                if (remaining > 0) {
-                    instance.handler.postDelayed(this, 600L);
-                }
-            }
-        });
-        return true;
-    }
     public static boolean requestReturnOnNextClientWindow() {
         if (instance == null) {
             returnOnNextClientWindow = false;
@@ -75,15 +72,84 @@ public class ClientAccessibilityService extends AccessibilityService {
         return true;
     }
 
+    /**
+     * 立即开始一次“断网 → 重新登录”的完整流程。
+     * 调用方负责先把广东校园拉到前台。
+     *
+     * @param returnAfterLogin 登录完成后是否自动返回原应用
+     * @return 是否已进入流程
+     */
+    public static boolean startReloginFlow(boolean returnAfterLogin) {
+        ClientAccessibilityService svc = instance;
+        if (svc == null) {
+            Log.d(TAG, "未启用无障碍，无法执行重登流程");
+            return false;
+        }
+        svc.handler.post(() -> {
+            svc.flowState = STATE_WAIT_DISCONNECT;
+            svc.flowStartedAt = System.currentTimeMillis();
+            svc.flowShouldReturnAfter = returnAfterLogin;
+            svc.handler.removeCallbacks(svc.flowTimeoutRunnable);
+            svc.handler.postDelayed(svc.flowTimeoutRunnable, WAIT_LOGIN_BUTTON_MS + 10_000L);
+            Log.d(TAG, "重登流程启动，等待“断开网络”按钮");
+        });
+        return true;
+    }
+
+    /**
+     * 取消当前重登流程（比如用户亮屏了，就不要再继续点）。
+     */
+    public static void cancelReloginFlow() {
+        ClientAccessibilityService svc = instance;
+        if (svc == null) return;
+        svc.handler.post(() -> {
+            if (svc.flowState != STATE_IDLE) {
+                Log.d(TAG, "重登流程已取消");
+                svc.flowState = STATE_IDLE;
+                svc.handler.removeCallbacks(svc.flowTimeoutRunnable);
+            }
+        });
+    }
+
+    /**
+     * 主动发返回键，用于把广东校园压回后台。
+     */
+    public static boolean performBackNow() {
+        return performBackNow(BACK_ATTEMPTS);
+    }
+
+    public static boolean performBackNow(int maxAttempts) {
+        ClientAccessibilityService svc = instance;
+        if (svc == null) {
+            Log.d(TAG, "未启用无障碍，无法执行返回");
+            return false;
+        }
+        final int attempts = Math.max(1, Math.min(maxAttempts, 6));
+        svc.handler.post(new Runnable() {
+            private int remaining = attempts;
+            @Override
+            public void run() {
+                if (remaining <= 0) return;
+                boolean sent = svc.performGlobalAction(GLOBAL_ACTION_BACK);
+                Log.d(TAG, "主动执行返回，剩余次数=" + remaining + "，结果=" + sent);
+                remaining--;
+                if (remaining > 0) {
+                    svc.handler.postDelayed(this, BACK_INTERVAL_MS);
+                }
+            }
+        });
+        return true;
+    }
+
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
-
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
-        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
+        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                | AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED;
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
-        info.notificationTimeout = 0;
+        info.notificationTimeout = 200;
         info.packageNames = new String[]{CLIENT_PACKAGE};
         setServiceInfo(info);
         Log.d(TAG, "无障碍服务已连接");
@@ -91,28 +157,129 @@ public class ClientAccessibilityService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        if (!returnOnNextClientWindow || event.getPackageName() == null) {
-            return;
-        }
-        if (!CLIENT_PACKAGE.equals(event.getPackageName().toString())) {
+        if (event.getPackageName() == null) return;
+        if (!CLIENT_PACKAGE.equals(event.getPackageName().toString())) return;
+
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null) return;
+
+        // 亮屏快速返回：优先级最高，只要标记了就立刻返回。
+        if (returnOnNextClientWindow) {
+            returnOnNextClientWindow = false;
+            performBackNow();
             return;
         }
 
-        returnOnNextClientWindow = false;
+        // 重登流程只在主线程上推进。
+        handler.post(() -> handleReloginState(root));
+    }
+
+    private void handleReloginState(AccessibilityNodeInfo root) {
+        if (flowState == STATE_IDLE) return;
+
         long now = System.currentTimeMillis();
-        if (now - lastReturnAt < 500L) {
-            return;
-        }
-        lastReturnAt = now;
 
-        // 不设置固定等待时间，窗口事件到达后立即返回。
-        handler.post(new Runnable() {
-            @Override
-            public void run() {
-                boolean sent = instance.performGlobalAction(GLOBAL_ACTION_BACK);
-                Log.d(TAG, "已立即返回原页面，结果=" + sent);
+        switch (flowState) {
+            case STATE_WAIT_DISCONNECT_ONLY:
+                // 只点一次断开网络，点完就通知 MonitorService 杀进程重启
+                if (hasVisibleText(root, BTN_DISCONNECT)) {
+                    if (now - lastClickAt > 2000L && clickFirstVisible(root, BTN_DISCONNECT)) {
+                        lastClickAt = now;
+                        flowState = STATE_IDLE;
+                        handler.removeCallbacks(flowTimeoutRunnable);
+                        Log.d(TAG, "已点击断开网络，通知 MonitorService 杀进程重启");
+                        MonitorService.onDisconnectClicked();
+                    }
+                } else if (hasVisibleText(root, BTN_LOGIN)) {
+                    // 本来就是已断开状态，直接让 MonitorService 重启
+                    flowState = STATE_IDLE;
+                    handler.removeCallbacks(flowTimeoutRunnable);
+                    Log.d(TAG, "当前已是登录页，直接通知 MonitorService 重启客户端");
+                    MonitorService.onDisconnectClicked();
+                }
+                break;
+
+            case STATE_WAIT_DISCONNECT:
+                if (hasVisibleText(root, BTN_DISCONNECT)) {
+                    if (now - lastClickAt > 2000L && clickFirstVisible(root, BTN_DISCONNECT)) {
+                        lastClickAt = now;
+                        flowState = STATE_WAIT_LOGIN_BUTTON;
+                        flowStartedAt = now;
+                        Log.d(TAG, "已点击断开网络，等待“点我登录”出现");
+                        // 页面刷新通常需要几秒，给 15 秒左右宽限。
+                        handler.removeCallbacks(flowTimeoutRunnable);
+                        handler.postDelayed(flowTimeoutRunnable, WAIT_LOGIN_BUTTON_MS);
+                    }
+                } else if (hasVisibleText(root, BTN_LOGIN)) {
+                    // 可能一打开就已经是登录页，那就直接进入下一步。
+                    flowState = STATE_WAIT_LOGIN_BUTTON;
+                    flowStartedAt = now;
+                    Log.d(TAG, "初始已是登录页，直接等待点击登录");
+                }
+                break;
+
+            case STATE_WAIT_LOGIN_BUTTON:
+                if (hasVisibleText(root, BTN_LOGIN)) {
+                    if (now - lastClickAt > 2000L && clickFirstVisible(root, BTN_LOGIN)) {
+                        lastClickAt = now;
+                        flowState = STATE_WAIT_LOGIN_DONE;
+                        flowStartedAt = now;
+                        Log.d(TAG, "已点击点我登录，等待连接完成");
+                        handler.removeCallbacks(flowTimeoutRunnable);
+                        handler.postDelayed(loginDoneRunnable, AFTER_LOGIN_BACK_DELAY_MS);
+                    }
+                }
+                break;
+
+            case STATE_WAIT_LOGIN_DONE:
+                // 这里不做网络判断，直接等固定时间后返回。
+                // 因为熄屏时用户看不到，稍微多等一点时间更稳。
+                break;
+        }
+    }
+
+    private final Runnable loginDoneRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (flowState != STATE_WAIT_LOGIN_DONE) return;
+            flowState = STATE_IDLE;
+            Log.d(TAG, "重登流程完成");
+            if (flowShouldReturnAfter) {
+                performBackNow(BACK_ATTEMPTS);
             }
-        });
+        }
+    };
+
+    private final Runnable flowTimeoutRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (flowState == STATE_IDLE) return;
+            Log.d(TAG, "重登流程超时，当前状态=" + flowState);
+            flowState = STATE_IDLE;
+            // 超时了也尽量返回，别让广东校园停在前台。
+            if (flowShouldReturnAfter) {
+                performBackNow(BACK_ATTEMPTS);
+            }
+        }
+    };
+
+    private boolean hasVisibleText(AccessibilityNodeInfo root, String text) {
+        List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByText(text);
+        for (AccessibilityNodeInfo node : nodes) {
+            if (node.isVisibleToUser()) return true;
+        }
+        return false;
+    }
+
+    private boolean clickFirstVisible(AccessibilityNodeInfo root, String text) {
+        List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByText(text);
+        for (AccessibilityNodeInfo node : nodes) {
+            if (node.isVisibleToUser() && node.isEnabled()) {
+                node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -126,6 +293,7 @@ public class ClientAccessibilityService extends AccessibilityService {
             instance = null;
         }
         returnOnNextClientWindow = false;
+        flowState = STATE_IDLE;
         handler.removeCallbacksAndMessages(null);
         Log.d(TAG, "无障碍服务已停止");
         super.onDestroy();
