@@ -5,18 +5,23 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
+import java.net.InetAddress;
 
 public class MonitorService extends Service {
 
@@ -24,12 +29,15 @@ public class MonitorService extends Service {
     private static final String CHANNEL_ID = "aiqin_monitor";
     private static final int NOTIFICATION_ID = 1001;
 
-    // Phase 1: first 1 minute, check every 5 seconds
+    // Phase 1: first 1 minute, check every 10 seconds
     private static final long PHASE1_DURATION_MS = 60 * 1000L;
-    private static final long PHASE1_INTERVAL_MS = 5 * 1000L;
+    private static final long PHASE1_INTERVAL_MS = 10 * 1000L;
 
-    // Phase 2: reset every 5 minutes (testing)
-    private static final long PHASE2_INTERVAL_MS = 5 * 60 * 1000L;
+    // Phase 2: check every 15 minutes when screen is on
+    private static final long PHASE2_INTERVAL_MS = 15 * 60 * 1000L;
+
+    // Screen off: do a reset cycle every 30 minutes (testing, will increase later)
+    private static final long SCREEN_OFF_RESET_INTERVAL_MS = 30 * 60 * 1000L;
 
     private static boolean running = false;
     public static boolean isRunning() { return running; }
@@ -37,19 +45,30 @@ public class MonitorService extends Service {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private long startTime = 0L;
     private long lastReset = 0L;
+    private boolean screenOn = true;
     private ConnectivityManager.NetworkCallback networkCallback;
+    private BroadcastReceiver screenReceiver;
 
     private final Runnable checkRunnable = new Runnable() {
         @Override
         public void run() {
             doCheck();
-            long elapsed = System.currentTimeMillis() - startTime;
-            long interval = (elapsed < PHASE1_DURATION_MS)
-                ? PHASE1_INTERVAL_MS
-                : PHASE2_INTERVAL_MS;
+            long interval = getCurrentInterval();
             handler.postDelayed(this, interval);
         }
     };
+
+    private long getCurrentInterval() {
+        if (!screenOn) {
+            // When screen is off, check more often for reset cycle
+            return 60 * 1000L; // every minute while screen off
+        }
+        long elapsed = System.currentTimeMillis() - startTime;
+        if (elapsed < PHASE1_DURATION_MS) {
+            return PHASE1_INTERVAL_MS;
+        }
+        return PHASE2_INTERVAL_MS;
+    }
 
     @Override
     public void onCreate() {
@@ -58,6 +77,7 @@ public class MonitorService extends Service {
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, buildNotification("monitoring..."));
         Log.d(TAG, "monitor service created");
+        registerScreenReceiver();
     }
 
     @Override
@@ -68,6 +88,38 @@ public class MonitorService extends Service {
             registerNetworkCallback();
         }
         return START_STICKY;
+    }
+
+    private void registerScreenReceiver() {
+        screenReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                String action = intent.getAction();
+                if (Intent.ACTION_SCREEN_OFF.equals(action)) {
+                    screenOn = false;
+                    Log.d(TAG, "screen off, starting screen-off maintenance");
+                    // Do a reset shortly after screen off
+                    handler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!screenOn && wifiValidated()) {
+                                Log.d(TAG, "screen off reset cycle");
+                                resetClient();
+                            }
+                        }
+                    }, 5000L);
+                } else if (Intent.ACTION_SCREEN_ON.equals(action)) {
+                    screenOn = true;
+                    Log.d(TAG, "screen on, checking network");
+                    // When screen turns on, do an immediate check
+                    doCheck();
+                }
+            }
+        };
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_SCREEN_OFF);
+        filter.addAction(Intent.ACTION_SCREEN_ON);
+        registerReceiver(screenReceiver, filter);
     }
 
     private void registerNetworkCallback() {
@@ -90,8 +142,7 @@ public class MonitorService extends Service {
     }
 
     private void doCheck() {
-        long elapsed = System.currentTimeMillis() - startTime;
-        String phase = (elapsed < PHASE1_DURATION_MS) ? "phase1" : "phase2";
+        String phase = screenOn ? "screen-on" : "screen-off";
         Log.d(TAG, "checking (" + phase + ")");
 
         if (wifiValidated()) {
@@ -110,14 +161,15 @@ public class MonitorService extends Service {
             // Client not running -> launch it, it will auto-connect
             Log.d(TAG, "launching client (not running)");
             launchClient();
+        } else if (screenOn) {
+            // Client running but no network + screen on -> let accessibility handle it
+            Log.d(TAG, "client running, screen on, accessibility should handle it");
         } else {
-            // Client running but no network -> force reset
+            // Screen off + client running + no network -> do a reset
             long timeSinceLastReset = System.currentTimeMillis() - lastReset;
             if (timeSinceLastReset > 60 * 1000L) {
-                Log.d(TAG, "client running but no network, doing reset");
+                Log.d(TAG, "screen off + no network, doing reset");
                 resetClient();
-            } else {
-                Log.d(TAG, "reset cooldown, waiting");
             }
         }
     }
@@ -133,8 +185,9 @@ public class MonitorService extends Service {
                 Log.d(TAG, "client relaunched");
             }
         }, 1500L);
-        // Accessibility service will handle returning user to previous app
-        // when it detects connected state
+        // No need to return to previous app - screen is off
+        // When user turns screen on, they will see whatever was there before
+        // (the client will be in foreground but user can just use recent apps)
     }
 
     private void killClient() {
@@ -159,7 +212,6 @@ public class MonitorService extends Service {
         }
     }
 
-
     private boolean wifiValidated() {
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         Network net = cm.getActiveNetwork();
@@ -171,7 +223,22 @@ public class MonitorService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return false;
         }
-        return true;
+        // Additional check: try to reach a known server
+        // This avoids false positives from captive portal
+        return isNetworkReallyConnected();
+    }
+
+    private boolean isNetworkReallyConnected() {
+        try {
+            // Quick DNS check - if we can resolve a known domain, network is working
+            InetAddress addr = InetAddress.getByName("www.baidu.com");
+            boolean reachable = addr != null && !addr.getHostAddress().isEmpty();
+            Log.d(TAG, "network reachability check: " + reachable);
+            return reachable;
+        } catch (Exception e) {
+            Log.d(TAG, "network check failed: " + e.getMessage());
+            return false;
+        }
     }
 
     private boolean isClientRunning() {
@@ -229,6 +296,11 @@ public class MonitorService extends Service {
             if (networkCallback != null) {
                 ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
                 cm.unregisterNetworkCallback(networkCallback);
+            }
+        } catch (Exception ignored) {}
+        try {
+            if (screenReceiver != null) {
+                unregisterReceiver(screenReceiver);
             }
         } catch (Exception ignored) {}
         Log.d(TAG, "monitor service destroyed");

@@ -2,7 +2,8 @@ package com.wyu.esurfing;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
-import android.content.Intent;
+import android.app.ActivityManager;
+import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -76,24 +77,18 @@ public class ClientAccessibilityService extends AccessibilityService {
                 if (clickFirstVisible(root, BTN_LOGIN)) {
                     lastClickAt = System.currentTimeMillis();
                     Log.d(TAG, "clicked: " + BTN_LOGIN);
-                    handler.postDelayed(new Runnable() {
-                        @Override
-                        public void run() { moveClientToBack(); }
-                    }, 4000L);
+                    scheduleReturnToPreviousApp();
                 }
                 break;
             case "need_retry":
                 if (clickFirstVisible(root, BTN_RETRY)) {
                     lastClickAt = System.currentTimeMillis();
                     Log.d(TAG, "clicked: " + BTN_RETRY);
-                    handler.postDelayed(new Runnable() {
-                        @Override
-                        public void run() { moveClientToBack(); }
-                    }, 4000L);
+                    scheduleReturnToPreviousApp();
                 }
                 break;
             case "connected":
-                Log.d(TAG, "already connected, returning home");
+                Log.d(TAG, "connected, moving client to back");
                 moveClientToBack();
                 break;
             default:
@@ -102,12 +97,25 @@ public class ClientAccessibilityService extends AccessibilityService {
         }
     }
 
+    private void scheduleReturnToPreviousApp() {
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                moveClientToBack();
+            }
+        }, 5000L);
+    }
+
     private void moveClientToBack() {
-        // Move the client app to back, so user returns to whatever they were doing before.
-        // This works because when we send the current foreground Activity to back,
-        // the previous Activity comes to foreground automatically.
-        performGlobalAction(GLOBAL_ACTION_BACK);
-        Log.d(TAG, "sent back action to return to previous app");
+        // Send global back action to dismiss the client and return to previous app
+        // This works better than going home because it returns to the app that was
+        // in the foreground before the client popped up
+        boolean success = performGlobalAction(GLOBAL_ACTION_BACK);
+        Log.d(TAG, "moveClientToBack: back action sent, success=" + success);
+
+        // If back action doesn't work (e.g. client has multiple activities),
+        // try the recent apps approach - but that is less reliable.
+        // First attempt: just one back press.
     }
 
     private boolean hasVisibleText(AccessibilityNodeInfo root, String text) {

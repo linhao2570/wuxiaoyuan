@@ -178,6 +178,36 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 16),
             Card(
+              color: Colors.orange[50],
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: const [
+                        Icon(Icons.info_outline, color: Colors.orange, size: 18),
+                        SizedBox(width: 8),
+                        Text('使用须知',
+                            style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.orange)),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '开启后台监测后，aiqin 和广东校园会一直运行在后台。'
+                      '熄屏时会定期重置广东校园以保持连接，亮屏后返回您之前使用的应用。',
+                      style:
+                          TextStyle(color: Colors.black87, fontSize: 12, height: 1.5),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -188,13 +218,10 @@ class _HomePageState extends State<HomePage> {
                             fontSize: 16, fontWeight: FontWeight.bold)),
                     SizedBox(height: 8),
                     Text(
-                      '启动后自动监测网络。掉线时自动拉起广东校园客户端，利用其启动时自动连接的特性保活。定时重启客户端防止掉线。无障碍服务辅助点击登录按钮。',
-                      style: TextStyle(color: Colors.grey, fontSize: 12, height: 1.5),
-                    ),
-                    SizedBox(height: 8),
-                    Text(
-                      '前 1 分钟每 5 秒检测一次，之后每 5 分钟重置一次客户端。',
-                      style: TextStyle(color: Colors.grey, fontSize: 12, height: 1.5),
+                      '1. 亮屏时：每 15 分钟检测一次网络，掉线自动重连。\n'
+                      '2. 熄屏时：定期重置广东校园，利用启动时自动连接的特性保活。\n'
+                      '3. 无障碍服务辅助点击登录按钮，并在连接成功后返回上一个应用。',
+                      style: TextStyle(color: Colors.grey, fontSize: 12, height: 1.6),
                     ),
                   ],
                 ),
@@ -226,11 +253,6 @@ class _HomePageState extends State<HomePage> {
                             fontFamily: 'monospace'),
                       ),
                     ),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              '提示：无法完全静默操作另一个 App，每次重连时广东校园会短暂出现在前台，连接成功后自动返回桌面。仅限个人自用。',
-              style: TextStyle(color: Colors.grey, fontSize: 12, height: 1.5),
             ),
           ],
         ),
