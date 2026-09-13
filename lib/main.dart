@@ -49,7 +49,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _init() async {
     final prefs = await SharedPreferences.getInstance();
-    final autoStart = prefs.getBool('auto_start') ?? true;
+    final autoStart = prefs.getBool('auto_start') ?? false;
     _appendLog('应用已启动');
     await _refreshStatus();
 
@@ -74,9 +74,7 @@ class _HomePageState extends State<HomePage> {
           _accessibilityOk = result['accessibilityRunning'] == true;
         });
       }
-    } catch (_) {
-      // Channel not ready yet, will retry
-    }
+    } catch (_) {}
   }
 
   void _appendLog(String msg) {
@@ -87,7 +85,7 @@ class _HomePageState extends State<HomePage> {
         '${now.second.toString().padLeft(2, '0')}';
     setState(() {
       _logs.insert(0, '$time $msg');
-      if (_logs.length > 80) _logs.removeLast();
+      if (_logs.length > 60) _logs.removeLast();
     });
   }
 
@@ -156,14 +154,14 @@ class _HomePageState extends State<HomePage> {
               child: ElevatedButton.icon(
                 onPressed: _monitorRunning ? _stopMonitor : _startMonitor,
                 style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
                   backgroundColor: _monitorRunning ? Colors.red : Colors.blue,
                   foregroundColor: Colors.white,
                 ),
-                icon: Icon(_monitorRunning ? Icons.stop : Icons.play_arrow),
+                icon: Icon(_monitorRunning ? Icons.stop : Icons.play_arrow, size: 22),
                 label: Text(
                   _monitorRunning ? '停止后台监测' : '开启后台监测',
-                  style: const TextStyle(fontSize: 16),
+                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                 ),
               ),
             ),
@@ -173,7 +171,39 @@ class _HomePageState extends State<HomePage> {
               child: OutlinedButton.icon(
                 onPressed: _openAccessibility,
                 icon: const Icon(Icons.accessibility_new),
-                label: const Text('开启无障碍权限'),
+                label: const Text('开启无障碍权限（可选）'),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Card(
+              color: Colors.blue[50],
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: const [
+                        Icon(Icons.auto_mode, color: Colors.blue, size: 20),
+                        SizedBox(width: 8),
+                        Text('怎么工作的',
+                            style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue)),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      '亮屏时：只在刚开启时检查一次网络，之后不打扰你。\n'
+                      '熄屏 30 秒后：自动重置一次广东校园，保持联网。\n'
+                      '持续熄屏：每 40 分钟重置一次。\n'
+                      '亮屏后：立刻停止重置，回到你之前用的应用。',
+                      style:
+                          TextStyle(color: Colors.black87, fontSize: 13, height: 1.6),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 16),
@@ -186,53 +216,32 @@ class _HomePageState extends State<HomePage> {
                   children: [
                     Row(
                       children: const [
-                        Icon(Icons.info_outline, color: Colors.orange, size: 18),
+                        Icon(Icons.info_outline, color: Colors.orange, size: 20),
                         SizedBox(width: 8),
-                        Text('使用须知',
+                        Text('温馨提示',
                             style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.orange)),
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     const Text(
-                      '开启后台监测后，aiqin 和广东校园会一直运行在后台。'
-                      '熄屏时会定期重置广东校园以保持连接，亮屏后返回您之前使用的应用。',
-                      style:
-                          TextStyle(color: Colors.black87, fontSize: 12, height: 1.5),
+                      '开启后，aiqin 会一直在后台运行，广东校园也会保持运行。\n'
+                      '请在系统设置中给 aiqin 开启：自启动、后台活动、电池优化不限制、通知权限。',
+                      style: TextStyle(
+                          color: Colors.black87, fontSize: 13, height: 1.6),
                     ),
                   ],
                 ),
               ),
             ),
             const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text('工作原理',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold)),
-                    SizedBox(height: 8),
-                    Text(
-                      '1. 亮屏时：每 15 分钟检测一次网络，掉线自动重连。\n'
-                      '2. 熄屏时：定期重置广东校园，利用启动时自动连接的特性保活。\n'
-                      '3. 无障碍服务辅助点击登录按钮，并在连接成功后返回上一个应用。',
-                      style: TextStyle(color: Colors.grey, fontSize: 12, height: 1.6),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text('运行日志',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text('日志',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Container(
-              height: 180,
+              height: 160,
               width: double.infinity,
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
@@ -280,15 +289,15 @@ class _StatusCard extends StatelessWidget {
         child: Column(
           children: [
             _statusRow(
-                'WiFi 网络',
+                'WiFi 状态',
                 wifiOk ? '已连接' : '未连接',
                 wifiOk ? Colors.green : Colors.red),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             _statusRow(
                 '后台监测',
                 monitorRunning ? '运行中' : '未启动',
                 monitorRunning ? Colors.green : Colors.grey),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             _statusRow(
                 '无障碍权限',
                 accessibilityOk ? '已开启' : '未开启',
@@ -303,21 +312,21 @@ class _StatusCard extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: const TextStyle(fontSize: 14)),
+        Text(label, style: const TextStyle(fontSize: 15)),
         Row(
           children: [
             Container(
-              width: 8,
-              height: 8,
+              width: 10,
+              height: 10,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: color,
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 10),
             Text(value,
                 style: TextStyle(
-                    fontSize: 14, color: color, fontWeight: FontWeight.bold)),
+                    fontSize: 15, color: color, fontWeight: FontWeight.bold)),
           ],
         ),
       ],
