@@ -36,6 +36,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _wifiConnected = false;
   bool _internetOk = false;
   bool _accessibilityOk = false;
+  bool _usageAccessOk = false;
   bool _loading = false;
   String _networkDetail = '尚未检测';
   List<String> _logs = const [];
@@ -67,6 +68,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _internetOk = result['internetOk'] == true;
         _monitorRunning = result['monitorRunning'] == true;
         _accessibilityOk = result['accessibilityRunning'] == true;
+        _usageAccessOk = result['usageAccessOk'] == true;
         _networkDetail = result['networkDetail'] as String? ?? '尚未检测';
         final rawLogs = result['logs'];
         _logs = rawLogs is List
@@ -113,6 +115,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _appendLog('已打开无障碍设置，请启用 aiqin');
     } catch (error) {
       _appendLog('打开无障碍设置失败：$error');
+    }
+  }
+
+  Future<void> _openUsageAccess() async {
+    try {
+      await _channel.invokeMethod('openUsageAccess');
+      _appendLog('已打开使用情况访问设置');
+    } catch (error) {
+      _appendLog('打开失败：');
     }
   }
 
@@ -181,6 +192,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 onPressed: _openAccessibility,
                 icon: const Icon(Icons.accessibility_new),
                 label: const Text('开启无障碍权限'),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _openUsageAccess,
+                icon: const Icon(Icons.history),
+                label: const Text('开启使用情况访问（可选）'),
               ),
             ),
             const SizedBox(height: 16),
@@ -385,4 +405,9 @@ class _InfoPanel extends StatelessWidget {
       ),
     );
   }
-}
+}            const SizedBox(height: 12),
+            _statusRow(
+                '使用情况访问',
+                _usageAccessOk ? '已授权' : '未授权',
+                _usageAccessOk ? Colors.green : Colors.orange),
+

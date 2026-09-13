@@ -348,6 +348,14 @@ public class MonitorService extends Service {
                     screenOn = false;
                     logEvent("检测到熄屏，30 秒后重置广东校园");
                     updateNotification("熄屏计时中");
+                    
+                    // 记录熄屏前的前台应用，重置后尽量回到那个应用
+                    lastForegroundPackage = getCurrentForegroundPackage();
+                    if (lastForegroundPackage != null) {
+                        Log.d(TAG, "熄屏前前台应用：" + lastForegroundPackage);
+                    } else {
+                        Log.d(TAG, "未能获取熄屏前前台应用（需使用情况访问权限）");
+                    }
                     scheduleScreenOffTasks();
                 } else if (Intent.ACTION_SCREEN_ON.equals(intent.getAction())) {
                     screenOn = true;
@@ -689,18 +697,24 @@ public class MonitorService extends Service {
         } else {
             logEvent("无障碍未开启，仅使用 Home Intent 压回");
         }
-        // 第三波：3 秒后再来一次 Home Intent，双重保险
+        // 第三波：2 秒后尝试恢复熄屏前的前台应用（需要使用情况访问权限）
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
                 if (!screenOn) {
-                    goHome();
-                    logEvent("熄屏重置：第 3 波压回（二次 Home 兜底）");
+                    boolean restored = restoreLastForegroundApp();
+                    if (!restored) {
+                        // 恢复失败再用 Home 兜底
+                        goHome();
+                        logEvent("熄屏重置：第 3 波压回（恢复失败，Home 兜底）");
+                    } else {
+                        logEvent("熄屏重置：第 3 波压回（已恢复熄屏前台应用）");
+                    }
                 } else {
                     logEvent("返回执行前已亮屏，跳过本次返回");
                 }
             }
-        }, 3_000L);
+        }, 2_500L);
     }
 
     /**
@@ -716,6 +730,69 @@ public class MonitorService extends Service {
             startActivity(home);
         } catch (Exception e) {
             logEvent("发送 Home Intent 失败：" + e.getClass().getSimpleName());
+        }
+    }
+
+
+    /**
+     * 尝试把熄屏前的前台应用恢复到前台。
+     * 需要用户授权"使用情况访问"权限，否则返回 false。
+     */
+    private boolean restoreLastForegroundApp() {
+        if (lastForegroundPackage == null || lastForegroundPackage.isEmpty()) {
+            logEvent("没有记录熄屏前的前台应用，跳过恢复");
+            return false;
+        }
+        // 不恢复广东校园自己
+        if (ClientAccessibilityService.CLIENT_PACKAGE.equals(lastForegroundPackage)) {
+            logEvent("熄屏前前台就是广东校园，跳过恢复");
+            return false;
+        }
+        try {
+            Intent intent = getPackageManager().getLaunchIntentForPackage(lastForegroundPackage);
+            if (intent == null) {
+                logEvent("无法找到前台应用的启动 Intent：" + lastForegroundPackage);
+                return false;
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                    | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                    | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(intent);
+            logEvent("已恢复熄屏前台应用：" + lastForegroundPackage);
+            return true;
+        } catch (Exception e) {
+            logEvent("恢复前台应用失败：" + e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    /**
+     * 获取当前前台应用的包名。
+     * 需要 android.permission.PACKAGE_USAGE_STATS 权限，
+     * 用户需要在系统设置里开启"使用情况访问"。
+     */
+    private String getCurrentForegroundPackage() {
+        try {
+            UsageStatsManager usm =
+                    (UsageStatsManager) getSystemService(Context.USAGE_STATS_SERVICE);
+            if (usm == null) return null;
+            long now = System.currentTimeMillis();
+            UsageEvents events = usm.queryEvents(now - 1000 * 60 * 5, now);
+            UsageEvents.Event event = new UsageEvents.Event();
+            String topPackage = null;
+            long lastTime = 0;
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event);
+                if (event.getEventType() == UsageEvents.Event.MOVE_TO_FOREGROUND) {
+                    if (event.getTimeStamp() > lastTime) {
+                        lastTime = event.getTimeStamp();
+                        topPackage = event.getPackageName();
+                    }
+                }
+            }
+            return topPackage;
+        } catch (Exception e) {
+            return null;
         }
     }
 

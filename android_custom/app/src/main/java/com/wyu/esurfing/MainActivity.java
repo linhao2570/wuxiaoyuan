@@ -1,5 +1,9 @@
 package com.wyu.esurfing;
 
+import android.app.AppOpsManager;
+import android.content.Context;
+import android.content.Intent;
+import android.os.Process;
 import android.content.Intent;
 import android.os.Build;
 import android.provider.Settings;
@@ -33,6 +37,9 @@ public class MainActivity extends FlutterActivity {
                     break;
                 case "openAccessibility":
                     openAccessibility(result);
+                    break;
+                case "openUsageAccess":
+                    openUsageAccess(result);
                     break;
                 case "getStatus":
                     getStatus(result);
@@ -79,7 +86,31 @@ public class MainActivity extends FlutterActivity {
      * 状态查询放到后台线程，避免实际联网探测卡住 Flutter 主线程。
      * 这个方法只在应用打开、回到前台或用户点击后调用，不做高频轮询。
      */
-    private void getStatus(MethodChannel.Result result) {
+        private void openUsageAccess(MethodChannel.Result result) {
+        try {
+            Intent intent = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
+            startActivity(intent);
+            result.success(true);
+        } catch (Exception e) {
+            result.error("USAGE_FAILED", e.getMessage(), null);
+        }
+    }
+
+    private boolean hasUsagePermission() {
+        try {
+            AppOpsManager ops = (AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+            if (ops == null) return false;
+            int mode = ops.checkOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    Process.myUid(),
+                    getPackageName());
+            return mode == AppOpsManager.MODE_ALLOWED;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+private void getStatus(MethodChannel.Result result) {
         statusExecutor.execute(() -> {
             MonitorService.NetworkState state =
                     MonitorService.checkNetwork(getApplicationContext(), true);
@@ -90,6 +121,7 @@ public class MainActivity extends FlutterActivity {
             map.put("networkDetail", state.detail);
             map.put("monitorRunning", MonitorService.isRunning());
             map.put("accessibilityRunning", ClientAccessibilityService.isRunning());
+            map.put("usageAccessOk", hasUsagePermission());
             map.putAll(MonitorService.getStatusSnapshot());
             runOnUiThread(() -> result.success(map));
         });
