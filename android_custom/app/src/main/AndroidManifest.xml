@@ -43,6 +43,10 @@
                 android:value="campus network monitor" />
         </service>
 
+        <receiver
+            android:name=".MonitorAlarmReceiver"
+            android:exported="false" />
+
         <service
             android:name=".ClientAccessibilityService"
             android:label="aiqin"

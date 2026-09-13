@@ -2,148 +2,98 @@ package com.wyu.esurfing;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
-import android.app.ActivityManager;
-import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityNodeInfo;
-import java.util.List;
 
+/**
+ * 只做一件事：aiqin 亮屏恢复流程启动广东校园后，
+ * 广东校园窗口一出现就发送一次返回键，回到用户原来使用的页面。
+ *
+ * Android 普通后台 Service 没有可靠的“返回上一个 App”接口，
+ * 所以这个小型无障碍服务是必要的系统能力适配。
+ * 它不会扫描其它应用，也不会自动点击账号、密码或验证码。
+ */
 public class ClientAccessibilityService extends AccessibilityService {
 
     public static final String CLIENT_PACKAGE = "com.cndatacom.campus.cdccportalgd";
     private static final String TAG = "aiqin-access";
-    private static ClientAccessibilityService instance = null;
-    public static boolean isRunning() { return instance != null; }
 
-    // Button texts from actual app screenshots
-    private static final String BTN_LOGIN = "点我登录";
-    private static final String BTN_RETRY = "重新检测";
-    private static final String BTN_DISCONNECT = "断开网络";
+    private static volatile ClientAccessibilityService instance;
+    private static volatile boolean returnOnNextClientWindow;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private long lastClickAt = 0L;
-    private String lastState = "unknown";
+    private long lastReturnAt;
+
+    public static boolean isRunning() {
+        return instance != null;
+    }
+
+    public static boolean requestReturnOnNextClientWindow() {
+        if (instance == null) {
+            returnOnNextClientWindow = false;
+            Log.d(TAG, "未启用无障碍，无法自动返回原页面");
+            return false;
+        }
+        returnOnNextClientWindow = true;
+        Log.d(TAG, "已标记：广东校园窗口出现后立即返回");
+        return true;
+    }
 
     @Override
     protected void onServiceConnected() {
+        super.onServiceConnected();
         instance = this;
+
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
-        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-            | AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED;
+        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
-        info.notificationTimeout = 300;
-        info.packageNames = new String[] { CLIENT_PACKAGE };
+        info.notificationTimeout = 0;
+        info.packageNames = new String[]{CLIENT_PACKAGE};
         setServiceInfo(info);
-        Log.d(TAG, "accessibility service connected");
+        Log.d(TAG, "无障碍服务已连接");
     }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        if (event.getPackageName() == null ||
-            !CLIENT_PACKAGE.equals(event.getPackageName().toString())) {
+        if (!returnOnNextClientWindow || event.getPackageName() == null) {
             return;
         }
-        AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root == null) return;
-
-        if (System.currentTimeMillis() - lastClickAt < 5000) return;
-
-        // Detect current state
-        boolean hasLogin = hasVisibleText(root, BTN_LOGIN);
-        boolean hasRetry = hasVisibleText(root, BTN_RETRY);
-        boolean hasDisconnect = hasVisibleText(root, BTN_DISCONNECT);
-
-        String state;
-        if (hasDisconnect) {
-            state = "connected";
-        } else if (hasLogin) {
-            state = "need_login";
-        } else if (hasRetry) {
-            state = "need_retry";
-        } else {
-            state = "unknown";
+        if (!CLIENT_PACKAGE.equals(event.getPackageName().toString())) {
+            return;
         }
 
-        if (!state.equals(lastState)) {
-            lastState = state;
-            Log.d(TAG, "client state: " + state);
+        returnOnNextClientWindow = false;
+        long now = System.currentTimeMillis();
+        if (now - lastReturnAt < 500L) {
+            return;
         }
+        lastReturnAt = now;
 
-        switch (state) {
-            case "need_login":
-                if (clickFirstVisible(root, BTN_LOGIN)) {
-                    lastClickAt = System.currentTimeMillis();
-                    Log.d(TAG, "clicked: " + BTN_LOGIN);
-                    scheduleReturnToPreviousApp();
-                }
-                break;
-            case "need_retry":
-                if (clickFirstVisible(root, BTN_RETRY)) {
-                    lastClickAt = System.currentTimeMillis();
-                    Log.d(TAG, "clicked: " + BTN_RETRY);
-                    scheduleReturnToPreviousApp();
-                }
-                break;
-            case "connected":
-                Log.d(TAG, "connected, moving client to back");
-                moveClientToBack();
-                break;
-            default:
-                // Unknown state, do nothing
-                break;
-        }
-    }
-
-    private void scheduleReturnToPreviousApp() {
-        handler.postDelayed(new Runnable() {
+        // 不设置固定等待时间，窗口事件到达后立即返回。
+        handler.post(new Runnable() {
             @Override
             public void run() {
-                moveClientToBack();
+                boolean sent = performGlobalAction(GLOBAL_ACTION_BACK);
+                Log.d(TAG, "已立即返回原页面，结果=" + sent);
             }
-        }, 5000L);
-    }
-
-    private void moveClientToBack() {
-        // Send global back action to dismiss the client and return to previous app
-        // This works better than going home because it returns to the app that was
-        // in the foreground before the client popped up
-        boolean success = performGlobalAction(GLOBAL_ACTION_BACK);
-        Log.d(TAG, "moveClientToBack: back action sent, success=" + success);
-
-        // If back action doesn't work (e.g. client has multiple activities),
-        // try the recent apps approach - but that is less reliable.
-        // First attempt: just one back press.
-    }
-
-    private boolean hasVisibleText(AccessibilityNodeInfo root, String text) {
-        List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByText(text);
-        for (AccessibilityNodeInfo node : nodes) {
-            if (node.isVisibleToUser()) return true;
-        }
-        return false;
-    }
-
-    private boolean clickFirstVisible(AccessibilityNodeInfo root, String text) {
-        List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByText(text);
-        for (AccessibilityNodeInfo node : nodes) {
-            if (node.isVisibleToUser() && node.isEnabled()) {
-                node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                return true;
-            }
-        }
-        return false;
+        });
     }
 
     @Override
-    public void onInterrupt() {}
+    public void onInterrupt() {
+        Log.d(TAG, "无障碍服务被系统中断");
+    }
 
     @Override
     public void onDestroy() {
-        instance = null;
+        if (instance == this) {
+            instance = null;
+        }
+        returnOnNextClientWindow = false;
         handler.removeCallbacksAndMessages(null);
+        Log.d(TAG, "无障碍服务已停止");
         super.onDestroy();
     }
 }

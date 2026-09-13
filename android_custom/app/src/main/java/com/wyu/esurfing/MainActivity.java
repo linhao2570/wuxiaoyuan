@@ -1,98 +1,103 @@
 package com.wyu.esurfing;
 
 import android.content.Intent;
-import android.net.ConnectivityManager;
-import android.net.Network;
-import android.net.NetworkCapabilities;
 import android.os.Build;
 import android.provider.Settings;
+
 import io.flutter.embedding.android.FlutterActivity;
 import io.flutter.embedding.engine.FlutterEngine;
 import io.flutter.plugin.common.MethodChannel;
+
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends FlutterActivity {
 
     private static final String CHANNEL = "aiqin/client_control";
-    static MethodChannel channel;
+    private final ExecutorService statusExecutor = Executors.newSingleThreadExecutor();
 
     @Override
     public void configureFlutterEngine(FlutterEngine flutterEngine) {
         super.configureFlutterEngine(flutterEngine);
-        channel = new MethodChannel(flutterEngine.getDartExecutor().getBinaryMessenger(), CHANNEL);
-        channel.setMethodCallHandler(
-            (call, result) -> {
-                switch (call.method) {
-                    case "startMonitor":
-                        startMonitor(result);
-                        break;
-                    case "stopMonitor":
-                        stopMonitor(result);
-                        break;
-                    case "openAccessibility":
-                        openAccessibility(result);
-                        break;
-                    case "getStatus":
-                        getStatus(result);
-                        break;
-                    default:
-                        result.notImplemented();
-                }
+        MethodChannel channel = new MethodChannel(
+                flutterEngine.getDartExecutor().getBinaryMessenger(), CHANNEL);
+        channel.setMethodCallHandler((call, result) -> {
+            switch (call.method) {
+                case "startMonitor":
+                    startMonitor(result);
+                    break;
+                case "stopMonitor":
+                    stopMonitor(result);
+                    break;
+                case "openAccessibility":
+                    openAccessibility(result);
+                    break;
+                case "getStatus":
+                    getStatus(result);
+                    break;
+                default:
+                    result.notImplemented();
             }
-        );
+        });
     }
 
     private void startMonitor(MethodChannel.Result result) {
-        if (MonitorService.isRunning()) {
+        try {
+            Intent intent = new Intent(this, MonitorService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
+            }
             result.success(true);
-            return;
+        } catch (Exception e) {
+            result.error("START_FAILED", e.getMessage(), null);
         }
-        Intent intent = new Intent(this, MonitorService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent);
-        } else {
-            startService(intent);
-        }
-        result.success(true);
     }
 
     private void stopMonitor(MethodChannel.Result result) {
-        Intent intent = new Intent(this, MonitorService.class);
-        stopService(intent);
-        result.success(true);
+        try {
+            stopService(new Intent(this, MonitorService.class));
+            result.success(true);
+        } catch (Exception e) {
+            result.error("STOP_FAILED", e.getMessage(), null);
+        }
     }
 
     private void openAccessibility(MethodChannel.Result result) {
-        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-        result.success(true);
-    }
-
-    private void getStatus(MethodChannel.Result result) {
-        Map<String, Object> map = new HashMap<>();
-        map.put("wifiOk", wifiValidated());
-        map.put("monitorRunning", MonitorService.isRunning());
-        map.put("accessibilityRunning", ClientAccessibilityService.isRunning());
-        result.success(map);
-    }
-
-    private boolean wifiValidated() {
-        ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
-        Network net = cm.getActiveNetwork();
-        if (net == null) return false;
-        NetworkCapabilities caps = cm.getNetworkCapabilities(net);
-        if (caps == null) return false;
-        if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return false;
-        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return false;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return false;
+        try {
+            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+            result.success(true);
+        } catch (Exception e) {
+            result.error("SETTINGS_FAILED", e.getMessage(), null);
         }
-        return true;
+    }
+
+    /**
+     * 状态查询放到后台线程，避免实际联网探测卡住 Flutter 主线程。
+     * 这个方法只在应用打开、回到前台或用户点击后调用，不做高频轮询。
+     */
+    private void getStatus(MethodChannel.Result result) {
+        statusExecutor.execute(() -> {
+            MonitorService.NetworkState state =
+                    MonitorService.checkNetwork(getApplicationContext(), true);
+            Map<String, Object> map = new HashMap<>();
+            map.put("wifiConnected", state.wifiConnected);
+            map.put("wifiOk", state.wifiConnected);
+            map.put("internetOk", state.internetOk);
+            map.put("networkDetail", state.detail);
+            map.put("monitorRunning", MonitorService.isRunning());
+            map.put("accessibilityRunning", ClientAccessibilityService.isRunning());
+            map.putAll(MonitorService.getStatusSnapshot());
+            runOnUiThread(() -> result.success(map));
+        });
     }
 
     @Override
     protected void onDestroy() {
-        channel = null;
+        statusExecutor.shutdownNow();
         super.onDestroy();
     }
 }

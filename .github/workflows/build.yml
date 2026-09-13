@@ -35,6 +35,7 @@ jobs:
           cp android_custom/app/src/main/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           cp android_custom/app/src/main/java/com/wyu/esurfing/MainActivity.java android/app/src/main/java/com/wyu/esurfing/MainActivity.java
           cp android_custom/app/src/main/java/com/wyu/esurfing/MonitorService.java android/app/src/main/java/com/wyu/esurfing/MonitorService.java
+          cp android_custom/app/src/main/java/com/wyu/esurfing/MonitorAlarmReceiver.java android/app/src/main/java/com/wyu/esurfing/MonitorAlarmReceiver.java
           cp android_custom/app/src/main/java/com/wyu/esurfing/ClientAccessibilityService.java android/app/src/main/java/com/wyu/esurfing/ClientAccessibilityService.java
           mkdir -p android/app/src/main/res/xml
           cp android_custom/app/src/main/res/xml/accessibility_service_config.xml android/app/src/main/res/xml/accessibility_service_config.xml
