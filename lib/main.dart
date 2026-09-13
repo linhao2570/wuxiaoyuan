@@ -32,39 +32,23 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   static const _channel = MethodChannel('aiqin/client_control');
-  final _logs = <String>[];
-  bool _monitoring = false;
   bool _autoStart = true;
+  final _logs = <String>[];
 
   @override
   void initState() {
     super.initState();
-    _channel.setMethodCallHandler(_handleNativeCall);
     _init();
   }
 
   Future<void> _init() async {
     final prefs = await SharedPreferences.getInstance();
     _autoStart = prefs.getBool('auto_start') ?? true;
-    _appendLog('应用已启动');
+    _appendLog('app started');
     if (_autoStart) {
       await _call('startMonitor');
     }
     if (mounted) setState(() {});
-  }
-
-  Future<dynamic> _handleNativeCall(MethodCall call) async {
-    switch (call.method) {
-      case 'log':
-        _appendLog(call.arguments?.toString() ?? '');
-        break;
-      case 'status':
-        final running = call.arguments == true;
-        if (mounted) setState(() => _monitoring = running);
-        break;
-      default:
-        break;
-    }
   }
 
   void _appendLog(String msg) {
@@ -75,21 +59,18 @@ class _HomePageState extends State<HomePage> {
         '${now.second.toString().padLeft(2, '0')}';
     setState(() {
       _logs.insert(0, '$time $msg');
-      if (_logs.length > 120) _logs.removeLast();
+      if (_logs.length > 80) _logs.removeLast();
     });
   }
 
   Future<void> _call(String method) async {
     try {
       final result = await _channel.invokeMethod(method);
-      _appendLog('执行 $method: ${result == true ? "成功" : result ?? "已执行"}');
-      if (method == 'startMonitor' || method == 'stopMonitor') {
-        setState(() => _monitoring = method == 'startMonitor');
-      }
+      _appendLog('$method: ${result == true ? "ok" : result ?? "done"}');
     } on PlatformException catch (e) {
-      _appendLog('$method 失败: ${e.message ?? e.code}');
+      _appendLog('$method failed: ${e.message ?? e.code}');
     } catch (e) {
-      _appendLog('$method 异常: $e');
+      _appendLog('$method error: $e');
     }
   }
 
@@ -103,7 +84,7 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('aiqin - 广东校园助手'),
+        title: const Text('aiqin - Campus Helper'),
         centerTitle: true,
       ),
       body: SingleChildScrollView(
@@ -111,18 +92,31 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _StatusCard(monitoring: _monitoring),
+            const _StatusCard(),
             const SizedBox(height: 16),
-            const Text('快捷操作', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text('Quick Actions',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                _Btn(icon: Icons.play_arrow, label: '开启后台监测', onTap: () => _call('startMonitor')),
-                _Btn(icon: Icons.stop, label: '停止后台监测', onTap: () => _call('stopMonitor')),
-                _Btn(icon: Icons.open_in_new, label: '打开广东校园', onTap: () => _call('openClient')),
-                _Btn(icon: Icons.accessibility_new, label: '开启无障碍权限', onTap: () => _call('openAccessibility')),
+                _Btn(
+                    icon: Icons.play_arrow,
+                    label: 'Start Monitor',
+                    onTap: () => _call('startMonitor')),
+                _Btn(
+                    icon: Icons.stop,
+                    label: 'Stop Monitor',
+                    onTap: () => _call('stopMonitor')),
+                _Btn(
+                    icon: Icons.open_in_new,
+                    label: 'Open Campus App',
+                    onTap: () => _call('openClient')),
+                _Btn(
+                    icon: Icons.accessibility_new,
+                    label: 'Open Accessibility',
+                    onTap: () => _call('openAccessibility')),
               ],
             ),
             const SizedBox(height: 16),
@@ -132,10 +126,12 @@ class _HomePageState extends State<HomePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('设置', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const Text('Settings',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     SwitchListTile(
-                      title: const Text('启动时自动开启监测'),
+                      title: const Text('Auto start on launch'),
                       value: _autoStart,
                       onChanged: _toggleAutoStart,
                     ),
@@ -144,7 +140,8 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
             const SizedBox(height: 16),
-            const Text('运行日志', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text('Log',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Container(
               height: 240,
@@ -155,19 +152,23 @@ class _HomePageState extends State<HomePage> {
                 borderRadius: BorderRadius.circular(4),
               ),
               child: _logs.isEmpty
-                  ? const Text('暂无日志', style: TextStyle(color: Colors.grey, fontSize: 12))
+                  ? const Text('no log yet',
+                      style: TextStyle(color: Colors.grey, fontSize: 12))
                   : ListView.builder(
                       reverse: true,
                       itemCount: _logs.length,
                       itemBuilder: (_, i) => Text(
                         _logs[_logs.length - 1 - i],
-                        style: const TextStyle(color: Colors.greenAccent, fontSize: 12, fontFamily: 'monospace'),
+                        style: const TextStyle(
+                            color: Colors.greenAccent,
+                            fontSize: 12,
+                            fontFamily: 'monospace'),
                       ),
                     ),
             ),
             const SizedBox(height: 12),
             const Text(
-              '说明：本应用仅作为广东校园客户端的辅助工具，通过系统无障碍服务识别并点击页面中的登录按钮。仅限个人自用，请遵守校园网使用规定。',
+              'This app only assists the official campus client via system accessibility. For personal use only.',
               style: TextStyle(color: Colors.grey, fontSize: 12, height: 1.5),
             ),
           ],
@@ -178,8 +179,7 @@ class _HomePageState extends State<HomePage> {
 }
 
 class _StatusCard extends StatelessWidget {
-  final bool monitoring;
-  const _StatusCard({required this.monitoring});
+  const _StatusCard();
 
   @override
   Widget build(BuildContext context) {
@@ -191,22 +191,23 @@ class _StatusCard extends StatelessWidget {
             Container(
               width: 12,
               height: 12,
-              decoration: BoxDecoration(
+              decoration: const BoxDecoration(
                 shape: BoxShape.circle,
-                color: monitoring ? Colors.green : Colors.grey,
+                color: Colors.blue,
               ),
             ),
             const SizedBox(width: 12),
-            Expanded(
+            const Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(monitoring ? '监测运行中' : '监测未启动',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 4),
+                  Text('Background Monitor',
+                      style: TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold)),
+                  SizedBox(height: 4),
                   Text(
-                    monitoring ? 'WiFi 未验证时自动唤起广东校园' : '点击下方按钮开启后台监测',
-                    style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                    'Tap Start Monitor and enable accessibility.',
+                    style: TextStyle(color: Colors.grey, fontSize: 12),
                   ),
                 ],
               ),
