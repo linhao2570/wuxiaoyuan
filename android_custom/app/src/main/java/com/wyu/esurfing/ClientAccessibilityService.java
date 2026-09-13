@@ -35,13 +35,32 @@ public class ClientAccessibilityService extends AccessibilityService {
      * 用于熄屏重置后把广东校园压回后台，让亮屏时用户仍看到之前的应用。
      */
     public static boolean performBackNow() {
+        return performBackNow(1);
+    }
+
+    /**
+     * 连续发送若干次返回键。
+     * 广东校园可能有多个 Activity 栈，一次返回不一定能立刻回到原应用，
+     * 所以最多尝试 maxAttempts 次，每次间隔一小段时间。
+     */
+    public static boolean performBackNow(int maxAttempts) {
         if (instance == null) {
             Log.d(TAG, "未启用无障碍，无法执行返回");
             return false;
         }
-        instance.handler.post(() -> {
-            boolean sent = instance.performGlobalAction(GLOBAL_ACTION_BACK);
-            Log.d(TAG, "主动执行返回，结果=" + sent);
+        final int attempts = Math.max(1, Math.min(maxAttempts, 4));
+        instance.handler.post(new Runnable() {
+            private int remaining = attempts;
+            @Override
+            public void run() {
+                if (remaining <= 0) return;
+                boolean sent = performGlobalAction(GLOBAL_ACTION_BACK);
+                Log.d(TAG, "主动执行返回，剩余次数=" + remaining + "，结果=" + sent);
+                remaining--;
+                if (remaining > 0) {
+                    instance.handler.postDelayed(this, 600L);
+                }
+            }
         });
         return true;
     }

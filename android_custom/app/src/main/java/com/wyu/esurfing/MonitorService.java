@@ -66,8 +66,29 @@ public class MonitorService extends Service {
             "com.wyu.esurfing.action.FIRST_SCREEN_OFF_RESET";
     public static final String ACTION_PERIODIC_RESET =
             "com.wyu.esurfing.action.PERIODIC_SCREEN_OFF_RESET";
+    // 夜间停止监测 + 关闭广东校园
+    public static final String ACTION_NIGHT_STOP =
+            "com.wyu.esurfing.action.NIGHT_STOP";
+    // 早晨恢复监测
+    public static final String ACTION_MORNING_RESUME =
+            "com.wyu.esurfing.action.MORNING_RESUME";
+    // 每小时日志清理
+    public static final String ACTION_HOURLY_LOG_TRIM =
+            "com.wyu.esurfing.action.HOURLY_LOG_TRIM";
     private static final int FIRST_RESET_REQUEST = 2201;
     private static final int PERIODIC_RESET_REQUEST = 2202;
+    private static final int NIGHT_STOP_REQUEST = 2203;
+    private static final int MORNING_RESUME_REQUEST = 2204;
+    private static final int HOURLY_LOG_TRIM_REQUEST = 2205;
+
+    // 夜间停止时间：00:30
+    private static final int NIGHT_STOP_HOUR = 0;
+    private static final int NIGHT_STOP_MINUTE = 30;
+    // 早晨恢复时间：07:00
+    private static final int MORNING_RESUME_HOUR = 7;
+    private static final int MORNING_RESUME_MINUTE = 0;
+    // 日志最多保留条数
+    private static final int MAX_LOG_LINES = 60;
 
     private static final Object LOG_LOCK = new Object();
     private static final ArrayDeque<String> RECENT_LOGS = new ArrayDeque<>();
@@ -269,6 +290,8 @@ public class MonitorService extends Service {
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, buildNotification("后台监测已开启"));
         registerScreenReceiver();
+        scheduleNextNightStopAlarm();
+        scheduleNextHourlyLogTrim();
         logEvent("后台监测已启动");
 
         if (!screenOn) {
@@ -357,7 +380,73 @@ public class MonitorService extends Service {
         cancelAlarm(ACTION_PERIODIC_RESET, PERIODIC_RESET_REQUEST);
     }
 
+    private long nextDailyTriggerAt(int hour, int minute) {
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        cal.set(java.util.Calendar.HOUR_OF_DAY, hour);
+        cal.set(java.util.Calendar.MINUTE, minute);
+        cal.set(java.util.Calendar.SECOND, 0);
+        cal.set(java.util.Calendar.MILLISECOND, 0);
+        long now = System.currentTimeMillis();
+        if (cal.getTimeInMillis() <= now) {
+            cal.add(java.util.Calendar.DAY_OF_MONTH, 1);
+        }
+        return cal.getTimeInMillis();
+    }
+
+    private void scheduleNextNightStopAlarm() {
+        long triggerAt = nextDailyTriggerAt(NIGHT_STOP_HOUR, NIGHT_STOP_MINUTE);
+        scheduleExactRtcAlarm(ACTION_NIGHT_STOP, NIGHT_STOP_REQUEST, triggerAt);
+    }
+
+    private void scheduleMorningResumeAlarm() {
+        long triggerAt = nextDailyTriggerAt(MORNING_RESUME_HOUR, MORNING_RESUME_MINUTE);
+        scheduleExactRtcAlarm(ACTION_MORNING_RESUME, MORNING_RESUME_REQUEST, triggerAt);
+    }
+
+    private void scheduleNextHourlyLogTrim() {
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        cal.add(java.util.Calendar.HOUR_OF_DAY, 1);
+        cal.set(java.util.Calendar.MINUTE, 0);
+        cal.set(java.util.Calendar.SECOND, 0);
+        cal.set(java.util.Calendar.MILLISECOND, 0);
+        scheduleExactRtcAlarm(ACTION_HOURLY_LOG_TRIM, HOURLY_LOG_TRIM_REQUEST, cal.getTimeInMillis());
+    }
+
+    private void scheduleExactRtcAlarm(String action, int requestCode, long triggerAt) {
+        if (alarmManager == null) return;
+        Intent intent = new Intent(this, MonitorAlarmReceiver.class).setAction(action);
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(
+                this,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
+            } else {
+                alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
+            }
+        } catch (Exception e) {
+            logEvent("安排定时任务失败：" + action + " " + e.getClass().getSimpleName());
+        }
+    }
+
     private void handleAlarm(String action) {
+        if (ACTION_NIGHT_STOP.equals(action)) {
+            handleNightStop();
+            return;
+        }
+        if (ACTION_MORNING_RESUME.equals(action)) {
+            handleMorningResume();
+            return;
+        }
+        if (ACTION_HOURLY_LOG_TRIM.equals(action)) {
+            trimLogs();
+            scheduleNextHourlyLogTrim();
+            return;
+        }
+
         if (screenOn) {
             logEvent("闹钟触发时已经亮屏，取消本次熄屏任务");
             cancelScreenOffTasks();
@@ -375,6 +464,42 @@ public class MonitorService extends Service {
             scheduleAlarm(ACTION_PERIODIC_RESET, PERIODIC_RESET_REQUEST,
                     SCREEN_OFF_RESET_INTERVAL_MS);
         }
+    }
+
+    /**
+     * 夜间 00:30 执行：停止熄屏重置任务、关闭广东校园、前台服务继续保留但低功耗运行。
+     * 保留服务是为了能在早晨自动恢复，也避免系统频繁杀掉再拉起。
+     */
+    private void handleNightStop() {
+        logEvent("进入夜间模式：停止熄屏重置，并关闭广东校园");
+        cancelScreenOffTasks();
+        killClient();
+        updateNotification("夜间休眠中，07:00 自动恢复");
+        scheduleMorningResumeAlarm();
+    }
+
+    /**
+     * 早晨 07:00 自动恢复：重新启动监测逻辑。
+     * 如果当时屏幕是熄灭的，就后台启动一次广东校园并压回，保证起床时网络在线。
+     */
+    private void handleMorningResume() {
+        logEvent("早晨恢复监测");
+        updateNotification("后台监测已开启");
+        scheduleNextNightStopAlarm();
+        if (!screenOn) {
+            logEvent("早晨恢复时处于熄屏，后台启动广东校园并压回");
+            launchClientOnly();
+            scheduleReturnToPreviousAppAfterReset();
+        }
+    }
+
+    private void trimLogs() {
+        synchronized (LOG_LOCK) {
+            while (RECENT_LOGS.size() > MAX_LOG_LINES) {
+                RECENT_LOGS.removeFirst();
+            }
+        }
+        Log.d(TAG, "日志已清理，保留最近 " + MAX_LOG_LINES + " 条");
     }
 
     private void scheduleAlarm(String action, int requestCode, long delayMs) {
@@ -478,7 +603,7 @@ public class MonitorService extends Service {
             @Override
             public void run() {
                 if (!screenOn) {
-                    boolean ok = ClientAccessibilityService.performBackNow();
+                    boolean ok = ClientAccessibilityService.performBackNow(3);
                     logEvent("熄屏重置完成，已尝试返回原应用：" + (ok ? "已发送" : "失败"));
                 } else {
                     logEvent("返回执行前已亮屏，跳过本次返回，避免误操作");
@@ -540,7 +665,7 @@ public class MonitorService extends Service {
         Log.d(TAG, line);
         synchronized (LOG_LOCK) {
             RECENT_LOGS.addLast(line);
-            while (RECENT_LOGS.size() > 80) {
+            while (RECENT_LOGS.size() > MAX_LOG_LINES) {
                 RECENT_LOGS.removeFirst();
             }
         }
@@ -558,6 +683,9 @@ public class MonitorService extends Service {
             instance = null;
         }
         cancelScreenOffTasks();
+        cancelAlarm(ACTION_NIGHT_STOP, NIGHT_STOP_REQUEST);
+        cancelAlarm(ACTION_MORNING_RESUME, MORNING_RESUME_REQUEST);
+        cancelAlarm(ACTION_HOURLY_LOG_TRIM, HOURLY_LOG_TRIM_REQUEST);
         handler.removeCallbacksAndMessages(null);
         networkExecutor.shutdownNow();
         try {
