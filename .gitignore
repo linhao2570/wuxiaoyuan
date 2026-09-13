@@ -1,0 +1,17 @@
+
+
+_rewrite_all.py
+_sanity_check.py
+_check_structure.py
+_test.py
+_gen_service.py
+_gen_manifest.py
+_gen_main_activity.py
+_gen_main_dart.py
+_b64.txt
+_fix*.py
+_check*.py
+_update*.py
+_verify.py
+_*.py
+
