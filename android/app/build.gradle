@@ -1,3 +1,6 @@
+def flutterVersionCode = '1'
+def flutterVersionName = '1.0'
+
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
 if (localPropertiesFile.exists()) {
@@ -6,24 +9,21 @@ if (localPropertiesFile.exists()) {
     }
 }
 
-def flutterRoot = localProperties.getProperty('flutter.sdk')
-if (flutterRoot == null) {
-    throw new GradleException("Flutter SDK not found. Define location with flutter.sdk in the local.properties file.")
+def flutterVersionCodeFromFile = localProperties.getProperty('flutter.versionCode')
+if (flutterVersionCodeFromFile != null) {
+    flutterVersionCode = flutterVersionCodeFromFile
 }
 
-def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
-if (flutterVersionCode == null) {
-    flutterVersionCode = '1'
+def flutterVersionNameFromFile = localProperties.getProperty('flutter.versionName')
+if (flutterVersionNameFromFile != null) {
+    flutterVersionName = flutterVersionNameFromFile
 }
 
-def flutterVersionName = localProperties.getProperty('flutter.versionName')
-if (flutterVersionName == null) {
-    flutterVersionName = '1.0'
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
 }
-
-apply plugin: 'com.android.application'
-apply plugin: 'kotlin-android'
-apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
 
 android {
     namespace "com.wyu.esurfing"
@@ -47,10 +47,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            minifyEnabled false
+        }
         release {
-            minifyEnabled true
-            shrinkResources true
-            signingConfig signingConfigs.debug
+            minifyEnabled false
         }
     }
 }
@@ -60,5 +61,5 @@ flutter {
 }
 
 dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.0"
 }
