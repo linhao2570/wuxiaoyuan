@@ -658,6 +658,29 @@ public class MonitorService extends Service {
     }
 
 
+
+    /**
+     * 重启后等一小段时间，再把广东校园压回后台，让亮屏时用户看到之前的应用。
+     * 等待时间 2 秒：给客户端刚启动时的初始化和连接发起留一点时间。
+     */
+    private void scheduleReturnToPreviousAppAfterReset() {
+        if (!ClientAccessibilityService.isRunning()) {
+            logEvent("无障碍未开启，熄屏重置后可能在亮屏时看到广东校园");
+            return;
+        }
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!screenOn) {
+                    boolean ok = ClientAccessibilityService.performBackNow(3);
+                    logEvent("熄屏重置完成，已尝试返回原应用：" + (ok ? "已发送" : "失败"));
+                } else {
+                    logEvent("返回执行前已亮屏，跳过本次返回，避免误操作");
+                }
+            }
+        }, 2_000L);
+    }
+
     private void killClient() {
         try {
             ActivityManager activityManager =
