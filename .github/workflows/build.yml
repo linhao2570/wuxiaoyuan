@@ -1,4 +1,4 @@
-﻿name: Build APK
+name: Build APK
 
 on:
   push:
@@ -22,6 +22,18 @@ jobs:
         with:
           flutter-version: '3.24.x'
           channel: 'stable'
+
+      - name: Generate standard Android project
+        run: |
+          flutter create --platforms=android --project-name=aiqin --org=com.wyu .
+
+      - name: Inject custom Android files
+        run: |
+          cp -r android_custom/app/src/main/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          cp -r android_custom/app/src/main/kotlin/com/wyu/esurfing/MainActivity.kt android/app/src/main/kotlin/com/wyu/esurfing/MainActivity.kt
+          cp -r android_custom/app/src/main/kotlin/com/wyu/esurfing/ClientAccessibilityService.kt android/app/src/main/kotlin/com/wyu/esurfing/ClientAccessibilityService.kt
+          mkdir -p android/app/src/main/res/xml
+          cp android_custom/app/src/main/res/xml/accessibility_service_config.xml android/app/src/main/res/xml/accessibility_service_config.xml
 
       - name: Install dependencies
         run: flutter pub get
