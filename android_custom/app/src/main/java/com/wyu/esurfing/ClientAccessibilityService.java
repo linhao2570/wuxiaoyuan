@@ -54,7 +54,7 @@ public class ClientAccessibilityService extends AccessibilityService {
             @Override
             public void run() {
                 if (remaining <= 0) return;
-                boolean sent = performGlobalAction(GLOBAL_ACTION_BACK);
+                boolean sent = instance.performGlobalAction(GLOBAL_ACTION_BACK);
                 Log.d(TAG, "主动执行返回，剩余次数=" + remaining + "，结果=" + sent);
                 remaining--;
                 if (remaining > 0) {
@@ -109,7 +109,7 @@ public class ClientAccessibilityService extends AccessibilityService {
         handler.post(new Runnable() {
             @Override
             public void run() {
-                boolean sent = performGlobalAction(GLOBAL_ACTION_BACK);
+                boolean sent = instance.performGlobalAction(GLOBAL_ACTION_BACK);
                 Log.d(TAG, "已立即返回原页面，结果=" + sent);
             }
         });
