@@ -78,7 +78,7 @@ public class ClientAccessibilityService extends AccessibilityService {
                     Log.d(TAG, "clicked: " + BTN_LOGIN);
                     handler.postDelayed(new Runnable() {
                         @Override
-                        public void run() { returnHome(); }
+                        public void run() { moveClientToBack(); }
                     }, 4000L);
                 }
                 break;
@@ -88,13 +88,13 @@ public class ClientAccessibilityService extends AccessibilityService {
                     Log.d(TAG, "clicked: " + BTN_RETRY);
                     handler.postDelayed(new Runnable() {
                         @Override
-                        public void run() { returnHome(); }
+                        public void run() { moveClientToBack(); }
                     }, 4000L);
                 }
                 break;
             case "connected":
                 Log.d(TAG, "already connected, returning home");
-                returnHome();
+                moveClientToBack();
                 break;
             default:
                 // Unknown state, do nothing
@@ -102,12 +102,12 @@ public class ClientAccessibilityService extends AccessibilityService {
         }
     }
 
-    private void returnHome() {
-        Intent home = new Intent(Intent.ACTION_MAIN);
-        home.addCategory(Intent.CATEGORY_HOME);
-        home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(home);
-        Log.d(TAG, "returned home");
+    private void moveClientToBack() {
+        // Move the client app to back, so user returns to whatever they were doing before.
+        // This works because when we send the current foreground Activity to back,
+        // the previous Activity comes to foreground automatically.
+        performGlobalAction(GLOBAL_ACTION_BACK);
+        Log.d(TAG, "sent back action to return to previous app");
     }
 
     private boolean hasVisibleText(AccessibilityNodeInfo root, String text) {

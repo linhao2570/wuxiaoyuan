@@ -133,12 +133,8 @@ public class MonitorService extends Service {
                 Log.d(TAG, "client relaunched");
             }
         }, 1500L);
-        handler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                returnHome();
-            }
-        }, 8000L);
+        // Accessibility service will handle returning user to previous app
+        // when it detects connected state
     }
 
     private void killClient() {
@@ -163,16 +159,6 @@ public class MonitorService extends Service {
         }
     }
 
-    private void returnHome() {
-        Intent home = new Intent(Intent.ACTION_MAIN);
-        home.addCategory(Intent.CATEGORY_HOME);
-        home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        startActivity(home);
-        Log.d(TAG, "returned home");
-        if (wifiValidated()) {
-            updateNotification("网络正常");
-        }
-    }
 
     private boolean wifiValidated() {
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
