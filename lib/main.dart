@@ -1,6 +1,7 @@
 ﻿import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'auto_login_service.dart';
 import 'portal_login.dart';
 import 'storage.dart';
@@ -34,6 +35,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  static const _clientChannel = MethodChannel('aiqin/client_control');
   final _service = AutoLoginService();
   AppConfig _config = AppConfig();
   final _logs = <String>[];
@@ -48,6 +50,17 @@ class _HomePageState extends State<HomePage> {
   Uint8List? _captchaBytes;
   String _captchaCookie = '';
   String _ocrResult = '';
+
+  Future<void> _clientAction(String method) async {
+    try {
+      await _clientChannel.invokeMethod(method);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(method == 'openAccessibility' ? '请在系统设置中开启 aiqin 无障碍服务' : '操作已执行')),
+      );
+    } on PlatformException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message ?? '操作失败')));
+    }
+  }
 
   @override
   void initState() {
@@ -74,6 +87,12 @@ class _HomePageState extends State<HomePage> {
     });
 
     setState(() => _loading = false);
+    // 打开 aiqin 后立即启动监测；客户端只有在需要检查时才会被唤起。
+    try {
+      await _clientChannel.invokeMethod('startMonitor');
+    } catch (_) {
+      // 用户尚未开启无障碍服务时，页面按钮仍可引导开启。
+    }
     _refreshCaptcha();
   }
 
@@ -280,6 +299,15 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
             ),
+            const SizedBox(height: 16),
+            const Text('广东校园客户端', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              OutlinedButton.icon(onPressed: () => _clientAction('openClient'), icon: const Icon(Icons.open_in_new), label: const Text('打开客户端')),
+              OutlinedButton.icon(onPressed: () => _clientAction('openAccessibility'), icon: const Icon(Icons.accessibility), label: const Text('开启无障碍')),
+              OutlinedButton.icon(onPressed: () => _clientAction('startMonitor'), icon: const Icon(Icons.play_arrow), label: const Text('后台监测')),
+              OutlinedButton.icon(onPressed: () => _clientAction('stopMonitor'), icon: const Icon(Icons.stop), label: const Text('停止监测')),
+            ]),
             const SizedBox(height: 16),
             const Text('配置',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
