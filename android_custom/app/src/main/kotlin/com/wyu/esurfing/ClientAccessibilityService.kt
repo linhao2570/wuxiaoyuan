@@ -2,11 +2,7 @@ package com.wyu.esurfing
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
-import android.content.Context
 import android.content.Intent
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -17,27 +13,20 @@ class ClientAccessibilityService : AccessibilityService() {
 
     companion object {
         const val CLIENT_PACKAGE = "com.cndatacom.campus.cdccportalgd"
-        private const val TAG = "aiqin-service"
+        private const val TAG = "aiqin-access"
         private var instance: ClientAccessibilityService? = null
         fun isRunning(): Boolean = instance != null
+
+        // Button texts - adjust based on actual client UI
+        // We search for partial text matches
+        private const val TEXT_LOGIN = "点我登录"
+        private const val TEXT_RETRY = "重新检测"
+        private const val TEXT_DISCONNECT = "断开连接"
     }
 
     private val handler = Handler(Looper.getMainLooper())
     private var lastClickAt = 0L
-    private var lastLaunchAt = 0L
-
-    // Check every 3 minutes; launch client only when WiFi is not validated
-    private val checkRunnable = object : Runnable {
-        override fun run() {
-            if (!wifiValidated()) {
-                Log.d(TAG, "WiFi not validated, launching client")
-                launchClientIfNeeded()
-            } else {
-                Log.d(TAG, "WiFi OK")
-            }
-            handler.postDelayed(this, 3 * 60 * 1000L)
-        }
-    }
+    private var lastState: String = "unknown"
 
     override fun onServiceConnected() {
         instance = this
@@ -48,67 +37,78 @@ class ClientAccessibilityService : AccessibilityService() {
             notificationTimeout = 300
             packageNames = arrayOf(CLIENT_PACKAGE)
         }
-        Log.d(TAG, "service connected")
-        handler.postDelayed(checkRunnable, 2000L)
+        Log.d(TAG, "accessibility service connected")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (event.packageName != CLIENT_PACKAGE) return
         val root = rootInActiveWindow ?: return
+
         if (System.currentTimeMillis() - lastClickAt < 5000) return
 
-        // Button text placeholders; will be adjusted after build success
-        val loginNode = findByText(root, "login")
-        val retryNode = findByText(root, "retry")
-        val target = loginNode ?: retryNode
+        // Detect state
+        val hasLogin = hasVisibleText(root, TEXT_LOGIN)
+        val hasRetry = hasVisibleText(root, TEXT_RETRY)
+        val hasDisconnect = hasVisibleText(root, TEXT_DISCONNECT)
 
-        if (target != null && target.isEnabled && target.isVisibleToUser) {
-            lastClickAt = System.currentTimeMillis()
-            Log.d(TAG, "clicking button")
-            target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            handler.postDelayed({ maybeReturnHome() }, 4000L)
+        val state = when {
+            hasLogin -> "need_login"
+            hasRetry -> "need_retry"
+            hasDisconnect -> "connected"
+            else -> "unknown"
+        }
+
+        if (state != lastState) {
+            lastState = state
+            Log.d(TAG, "client state: $state")
+        }
+
+        when (state) {
+            "need_login" -> {
+                clickFirstVisible(root, TEXT_LOGIN)
+                lastClickAt = System.currentTimeMillis()
+                Log.d(TAG, "clicked login button")
+                // Return home after a delay if network comes back
+                handler.postDelayed({ maybeReturnHome() }, 4000L)
+            }
+            "need_retry" -> {
+                clickFirstVisible(root, TEXT_RETRY)
+                lastClickAt = System.currentTimeMillis()
+                Log.d(TAG, "clicked retry button")
+                handler.postDelayed({ maybeReturnHome() }, 4000L)
+            }
+            "connected" -> {
+                // Already connected, just go back to home
+                Log.d(TAG, "already connected, returning home")
+                maybeReturnHome()
+            }
+            else -> {
+                // Unknown state, do nothing
+            }
         }
     }
 
     private fun maybeReturnHome() {
-        if (wifiValidated()) {
-            Log.d(TAG, "validated, returning home")
-            val home = Intent(Intent.ACTION_MAIN)
-                .addCategory(Intent.CATEGORY_HOME)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(home)
-        }
+        Log.d(TAG, "returning to home screen")
+        val home = Intent(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_HOME)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(home)
     }
 
-    private fun findByText(root: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
-        return root.findAccessibilityNodeInfosByText(text)
-            .firstOrNull { it.isVisibleToUser }
+    private fun hasVisibleText(root: AccessibilityNodeInfo, text: String): Boolean {
+        val nodes = root.findAccessibilityNodeInfosByText(text)
+        return nodes.any { it.isVisibleToUser }
     }
 
-    private fun launchClientIfNeeded() {
-        val now = System.currentTimeMillis()
-        if (now - lastLaunchAt < 60 * 1000L) return
-        lastLaunchAt = now
-        val intent = packageManager.getLaunchIntentForPackage(CLIENT_PACKAGE)
-        if (intent != null) {
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(intent)
-            Log.d(TAG, "launched client")
-        } else {
-            Log.d(TAG, "client not found")
+    private fun clickFirstVisible(root: AccessibilityNodeInfo, text: String): Boolean {
+        val nodes = root.findAccessibilityNodeInfosByText(text)
+        val target = nodes.firstOrNull { it.isVisibleToUser && it.isEnabled }
+        if (target != null) {
+            target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            return true
         }
-    }
-
-    private fun wifiValidated(): Boolean {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val net = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(net) ?: return false
-        if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return false
-        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return false
-        }
-        return true
+        return false
     }
 
     override fun onInterrupt() {}

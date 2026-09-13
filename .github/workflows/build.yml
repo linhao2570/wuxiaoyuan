@@ -33,6 +33,7 @@ jobs:
           cp android_custom/app/src/main/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           mkdir -p android/app/src/main/kotlin/com/wyu/esurfing
           cp android_custom/app/src/main/kotlin/com/wyu/esurfing/MainActivity.kt android/app/src/main/kotlin/com/wyu/esurfing/MainActivity.kt
+          cp android_custom/app/src/main/kotlin/com/wyu/esurfing/MonitorService.kt android/app/src/main/kotlin/com/wyu/esurfing/MonitorService.kt
           cp android_custom/app/src/main/kotlin/com/wyu/esurfing/ClientAccessibilityService.kt android/app/src/main/kotlin/com/wyu/esurfing/ClientAccessibilityService.kt
           mkdir -p android/app/src/main/res/xml
           cp android_custom/app/src/main/res/xml/accessibility_service_config.xml android/app/src/main/res/xml/accessibility_service_config.xml

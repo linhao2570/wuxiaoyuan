@@ -1,92 +1,82 @@
-﻿# 校园网自动登录 App（Flutter 安卓版）
+# aiqin - 广东校园助手
 
-给自己用的、超轻量的校园网 ESurfing Portal 自动登录 App。
-后台前台服务保活，连接校园网 WiFi 后自动检测，断网自动重登。
+一个轻量的 Android 应用，专门用来辅助「广东校园」客户端自动登录校园网。
+只做一件事：后台监测网络，掉线了自动拉起客户端并通过无障碍服务点击登录按钮。
 
 ## 功能
 
-- 填写账号密码 + 登录接口 URL 即可使用
-- 前台服务后台运行，状态栏常驻通知（防止被系统杀掉）
-- 定时检测网络，断开自动重新登录
-- 配置本地保存，开箱即用
-- 测试登录按钮，方便验证配置是否正确
+- 后台常驻监测，WiFi 掉线自动重连
+- 启动后前 2 分钟高频检测（每 10 秒一次），之后每 90 分钟检测一次
+- 自动判断广东校园是否在后台运行，未运行则自动拉起
+- 无障碍服务自动识别「点我登录」「重新检测」按钮并点击
+- 点击完成后自动返回桌面，尽量减少打扰
+- 前台服务保活，降低被系统回收的概率
 
-## 仅 4 个依赖
+## 工作流程
 
-- `http` — 网络请求
-- `shared_preferences` — 本地存储配置
-- `connectivity_plus` — WiFi 状态监听
-- `flutter_foreground_task` — 前台服务保活
-
-## 打包步骤
-
-### 环境准备
-
-1. 安装 Flutter SDK: https://docs.flutter.dev/get-started/install
-2. 安装 Android Studio（含 Android SDK）
-3. 验证环境:
-   ```bash
-   flutter doctor
-   ```
-
-### 打包 APK
-
-```bash
-cd wyu_esurfing_app
-
-# 安装依赖
-flutter pub get
-
-# 构建 release 版 APK（已开启代码混淆和资源压缩，体积最小）
-flutter build apk --release
+```
+开启后台监测
+  |
+  +---> 检测网络（WiFi + 是否验证通过）
+  |       |
+  |       +-- 网络正常 -> 什么都不做，等待下一轮
+  |       |
+  |       +-- 网络异常 -> 检查广东校园是否在运行
+  |                    |
+  |                    +-- 未运行 -> 启动广东校园 -> 等待无障碍服务点击按钮
+  |                    |
+  |                    +-- 已运行 -> 依赖无障碍服务判断按钮状态并点击
+  |
+  +---> 频率策略
+          |
+          +-- 前 2 分钟：每 10 秒检测一次
+          |
+          +-- 2 分钟后：每 90 分钟检测一次
 ```
 
-打包完成后，APK 在：
-```
-build/app/outputs/flutter-apk/app-release.apk
-```
+## 使用步骤
 
-传到手机安装即可。一般 release 包体积约 5~8 MB。
+1. 安装并打开 aiqin
+2. 点击「开启无障碍权限」，在系统设置中找到 aiqin 并开启
+3. 回到 aiqin，点击「开启后台监测」
+4. 给 aiqin 开启以下权限（必须做，否则后台会被杀）：
+   - 自启动
+   - 后台活动 / 后台弹出界面
+   - 电池优化设为「不限制」
+   - 通知权限（前台服务需要）
 
-## 使用方法
+## 重要限制
 
-1. 打开 App，填写配置：
-   - **登录接口 URL**：抓包获取的登录 POST 接口地址
-   - **账号**：校园网账号
-   - **密码**：校园网密码
-   - **额外表单字段**：抓包得到的除账号密码外的所有字段，每行一个 `key=value`
-   - **轮询间隔**：默认 15 秒，最小 5 秒
-2. 点「测试登录」验证配置是否正确
-3. 点「启动服务」开始后台运行
-4. 授予通知权限（Android 13+）和忽略电池优化（可选，更稳定）
+1. **无法完全静默操作另一个 App**：Android 系统规则决定了，无障碍服务只能在目标 App 窗口可见时读取并点击按钮。所以每次掉线重连时，广东校园会短暂出现在前台，点完后会自动回到桌面。这是系统限制，无法绕过。
 
-## 抓包教程（电脑端）
+2. **按钮文字需要匹配**：无障碍服务通过文字匹配按钮。如果广东校园客户端版本更新后按钮文字变了，需要相应修改匹配词。
 
-> 手机上也可以用 HttpCanary / Charles 抓包，但电脑上用 Chrome 更方便。
+3. **仅限个人自用**：请遵守校园网使用规定，不要用于代登录、账号共享等违规行为。
 
-1. 电脑连接校园网 WiFi（未登录状态）
-2. 打开 Chrome，按 F12 → Network → 勾选 Preserve log → 过滤 Fetch/XHR
-3. 手动输入账号密码点登录
-4. 在请求列表里找到 POST 请求
-5. 复制 Request URL → 填入 App 的「登录接口 URL」
-6. 看 Payload / Form Data，把除了账号密码外的所有字段填到「额外表单字段」
-
-## 注意事项
-
-- **仅限个人自用**，不要分享给他人
-- 轮询间隔不要低于 5 秒，避免给服务器造成压力
-- App 需要保持后台运行，建议在系统设置里把此 App 的电池优化设为「不限制」
-- 密码明文保存在本地 SharedPreferences 中（自己用没问题），不要把手机借给陌生人
-- 如果登录失败，打开日志区域看具体错误信息
+4. **不会绕过任何认证**：本应用只是模拟手动点击官方客户端的按钮，所有认证逻辑都在官方客户端内完成，和你手动点击效果完全一样。
 
 ## 项目结构
 
 ```
-lib/
-├── main.dart                # UI 主页面
-├── portal_login.dart        # 核心登录逻辑（HTTP POST）
-├── auto_login_service.dart  # 前台服务 + 轮询检测
-└── storage.dart             # 本地配置存储
+lib/main.dart                          - Flutter UI
+android_custom/                        - Android 原生自定义代码
+  app/src/main/AndroidManifest.xml     - 清单文件（含无障碍服务声明）
+  app/src/main/kotlin/com/wyu/esurfing/
+    MainActivity.kt                    - 主 Activity + MethodChannel
+    MonitorService.kt                  - 前台监测服务（网络检测 + 定时）
+    ClientAccessibilityService.kt      - 无障碍服务（点击按钮）
+  app/src/main/res/xml/
+    accessibility_service_config.xml   - 无障碍服务配置
+.github/workflows/build.yml            - GitHub Actions 构建配置
 ```
 
-核心登录逻辑 `doPortalLogin()` 与 Python 版 `do_portal_login()` 函数参数结构完全一致，便于对照调试。
+## 构建
+
+推荐通过 GitHub Actions 云端构建，无需本地安装 Flutter 和 Android Studio。
+推送代码到 main 分支后，在 Actions 页面下载 `app-debug.apk` 即可。
+
+## 注意事项
+
+- 本应用不会上传任何账号密码，也不会记录任何个人信息
+- 所有操作等价于你手动点击官方客户端
+- 如果发现耗电异常，可以在设置里关闭自动启动，手动控制
