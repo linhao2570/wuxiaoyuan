@@ -28,10 +28,11 @@ jobs:
           rm -rf android
           flutter create --platforms=android --project-name=esurfing --org=com.wyu --description="aiqin" .
 
-      - name: Inject custom Android files
+      - name: Remove default Kotlin Activity and inject custom Java files
         run: |
-          cp android_custom/app/src/main/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          rm -rf android/app/src/main/kotlin
           mkdir -p android/app/src/main/java/com/wyu/esurfing
+          cp android_custom/app/src/main/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           cp android_custom/app/src/main/java/com/wyu/esurfing/MainActivity.java android/app/src/main/java/com/wyu/esurfing/MainActivity.java
           cp android_custom/app/src/main/java/com/wyu/esurfing/MonitorService.java android/app/src/main/java/com/wyu/esurfing/MonitorService.java
           cp android_custom/app/src/main/java/com/wyu/esurfing/ClientAccessibilityService.java android/app/src/main/java/com/wyu/esurfing/ClientAccessibilityService.java
@@ -42,7 +43,7 @@ jobs:
         run: flutter pub get
 
       - name: Build APK
-        run: flutter build apk --debug
+        run: flutter build apk --debug --no-shrink
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
