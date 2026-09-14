@@ -23,6 +23,8 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
+import android.app.usage.UsageEvents;
+import android.app.usage.UsageStatsManager;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -104,7 +106,9 @@ public class MonitorService extends Service {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService networkExecutor = Executors.newSingleThreadExecutor();
     private AlarmManager alarmManager;
-    private boolean initialCheckDone;
+    private boolean initialCheckDone = false;
+    // 记录熄屏前的前台应用包名，重置后恢复用
+    private String lastForegroundPackage = null;
     private BroadcastReceiver screenReceiver;
 
     public static boolean isRunning() {
