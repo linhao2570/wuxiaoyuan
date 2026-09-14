@@ -26,6 +26,21 @@ import java.util.List;
  */
 public class ClientAccessibilityService extends AccessibilityService {
 
+    /**
+     * 把无障碍的关键日志同步到 MonitorService，让用户在 UI 上能看到。
+     */
+    private static void logAccess(String msg) {
+        Log.d(TAG, msg);
+        try {
+            // 用反射调用 MonitorService.logEvent，避免循环依赖问题
+            java.lang.reflect.Method m = Class.forName("com.wyu.esurfing.MonitorService")
+                    .getMethod("logAccessEvent", String.class);
+            m.invoke(null, msg);
+        } catch (Exception e) {
+            // 忽略，写不到也不影响功能
+        }
+    }
+
     public static final String CLIENT_PACKAGE = "com.cndatacom.campus.cdccportalgd";
     private static final String TAG = "aiqin-access";
 
@@ -74,6 +89,7 @@ public class ClientAccessibilityService extends AccessibilityService {
                 svc.handler.post(svc.clickRunnable);
                 svc.handler.postDelayed(svc.flowTimeoutRunnable, FLOW_TIMEOUT_MS);
                 Log.d(TAG, "已启动断开网络流程，最多尝试 " + MAX_CLICK_ATTEMPTS + " 次");
+                logAccess("启动断开网络流程");
             }
         });
         return true;
@@ -138,6 +154,7 @@ public class ClientAccessibilityService extends AccessibilityService {
             clickAttempts++;
             boolean clicked = tryClickDisconnect();
             Log.d(TAG, "第 " + clickAttempts + " 次点击断开网络，结果=" + clicked);
+            logAccess("第" + clickAttempts + "次尝试点击，结果=" + (clicked ? "成功" : "失败"));
 
             if (clicked) {
                 // 点到了，等 2 秒确认页面变化，然后回调
@@ -148,6 +165,7 @@ public class ClientAccessibilityService extends AccessibilityService {
                         flowState = STATE_IDLE;
                         handler.removeCallbacks(flowTimeoutRunnable);
                         Log.d(TAG, "断开网络已点击，回调 MonitorService");
+                    logAccess("已点击断开网络，开始重启");
                         MonitorService.onDisconnectClicked();
                     }
                 }, 2000L);
@@ -164,6 +182,7 @@ public class ClientAccessibilityService extends AccessibilityService {
         public void run() {
             if (flowState == STATE_IDLE) return;
             Log.d(TAG, "断开网络流程超时，兜底回调 MonitorService");
+            logAccess("点击超时，兜底杀进程重启");
             flowState = STATE_IDLE;
             handler.removeCallbacks(clickRunnable);
             MonitorService.onDisconnectClicked();
@@ -297,10 +316,16 @@ public class ClientAccessibilityService extends AccessibilityService {
             android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
             int width = dm.widthPixels;
             int height = dm.heightPixels;
-            // 按钮在屏幕中上位置，大概在圆心偏下（大圆内部下方的按钮）
+            // 多个候选位置，按尝试顺序轮流点
+            // 从截图看，按钮在大圆内部下方，大概是屏幕高度的 30%~38% 之间
+            // 不同手机屏幕比例不同，所以多试几个位置
+            float[] yRatios = { 0.31f, 0.34f, 0.37f, 0.30f, 0.39f };
+            int attemptIndex = clickAttempts % yRatios.length;
+            float yRatio = yRatios[attemptIndex];
             int x = width / 2;
-            int y = (int) (height * 0.38f);
-            Log.d(TAG, "坐标兜底点击：(" + x + ", " + y + ")，屏幕尺寸 " + width + "x" + height);
+            int y = (int) (height * yRatio);
+            Log.d(TAG, "坐标兜底点击（第" + clickAttempts + "次）：(" + x + ", " + y + ")，屏幕 " + width + "x" + height);
+            logAccess("坐标点击(" + attemptIndex + ")：" + x + "," + y);
             return clickAt(x, y);
         } catch (Exception e) {
             Log.d(TAG, "坐标点击失败：" + e.getMessage());

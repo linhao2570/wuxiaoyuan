@@ -13,6 +13,21 @@
 
     <queries>
         <package android:name="com.cndatacom.campus.cdccportalgd" />
+        <!-- 常用应用，用于熄屏重置后恢复前台 -->
+        <package android:name="com.tencent.mm" />
+        <package android:name="com.tencent.mobileqq" />
+        <package android:name="com.tencent.tim" />
+        <package android:name="com.sina.weibo" />
+        <package android:name="com.zhihu.android" />
+        <package android:name="com.tencent.qt.qtl" />
+        <package android:name="com.netease.cloudmusic" />
+        <package android:name="com.tencent.karaoke" />
+        <package android:name="com.qiyi.video" />
+        <package android:name="com.youku.phone" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <application

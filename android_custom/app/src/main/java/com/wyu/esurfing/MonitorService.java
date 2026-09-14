@@ -624,43 +624,45 @@ public class MonitorService extends Service {
      */
     private void resetClientInBackground() {
         if (!ClientAccessibilityService.isRunning()) {
-            logEvent("无障碍未开启，无法执行熄屏重登流程");
-            updateNotification("需开启无障碍才能自动重登");
+            logEvent("无障碍未运行，直接杀进程重启（不点击断开）");
+            doKillAndRelaunch();
             return;
         }
         updateNotification("正在后台重置广东校园");
-        logEvent("熄屏重置：准备启动广东校园并点击断开网络");
+        logEvent("熄屏重置：启动广东校园，准备点击断开网络");
         launchClientOnly();
 
-        // 等客户端启动完成后，触发无障碍只点断开
+        // 等 2 秒让客户端启动完成，然后触发点击断开网络
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
                 if (!screenOn) {
                     boolean started = ClientAccessibilityService.startDisconnectOnly();
                     logEvent("熄屏重置：已触发无障碍点断开网络，结果=" + started);
+                    if (!started) {
+                        // 无障碍触发失败，直接兜底杀进程重启
+                        logEvent("无障碍触发失败，直接杀进程重启");
+                        doKillAndRelaunch();
+                    }
                 } else {
                     logEvent("熄屏重置：执行前已亮屏，取消");
                     ClientAccessibilityService.cancelReloginFlow();
-                    if (!restoreLastForegroundApp()) {
-                        goHome();
-                    }
+                    restoreLastForegroundApp();
                 }
             }
         }, START_RELOGIN_DELAY_MS);
 
-        // 超时兜底：如果一直没回调，强制返回原应用
+        // 超时兜底：15 秒还没回调，说明点击可能失败了，直接杀进程重启
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
-                logEvent("熄屏重置：流程超时兜底，强制返回原应用");
-                ClientAccessibilityService.cancelReloginFlow();
-                if (!restoreLastForegroundApp()) {
-                        goHome();
-                    }
-                updateNotification("熄屏后台运行中");
+                if (!screenOn) {
+                    logEvent("熄屏重置：点击超时，兜底杀进程重启");
+                    ClientAccessibilityService.cancelReloginFlow();
+                    doKillAndRelaunch();
+                }
             }
-        }, SCREEN_OFF_RELOGIN_TIMEOUT_MS);
+        }, 15_000L);
     }
 
     /**
@@ -761,21 +763,47 @@ public class MonitorService extends Service {
             return false;
         }
         try {
-            Intent intent = getPackageManager().getLaunchIntentForPackage(lastForegroundPackage);
-            if (intent == null) {
-                logEvent("无法找到前台应用的启动 Intent：" + lastForegroundPackage);
-                return false;
+            // 方式 1：通过 ActivityManager 把任务移到前台（最可靠）
+            ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            if (am != null) {
+                List<ActivityManager.AppTask> tasks = am.getAppTasks();
+                if (tasks != null) {
+                    for (ActivityManager.AppTask task : tasks) {
+                        try {
+                            ActivityManager.RecentTaskInfo info = task.getTaskInfo();
+                            if (info != null && info.baseIntent != null
+                                    && info.baseIntent.getComponent() != null
+                                    && lastForegroundPackage.equals(
+                                            info.baseIntent.getComponent().getPackageName())) {
+                                task.moveToFront();
+                                logEvent("已通过 AppTask 恢复前台应用：" + lastForegroundPackage);
+                                return true;
+                            }
+                        } catch (Exception ignored) {
+                        }
+                    }
+                }
             }
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                    | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-                    | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            startActivity(intent);
-            logEvent("已恢复熄屏前台应用：" + lastForegroundPackage);
-            return true;
         } catch (Exception e) {
-            logEvent("恢复前台应用失败：" + e.getClass().getSimpleName());
-            return false;
+            logEvent("AppTask 恢复失败：" + e.getClass().getSimpleName());
         }
+        try {
+            // 方式 2：启动 Launcher Intent
+            Intent intent = getPackageManager().getLaunchIntentForPackage(lastForegroundPackage);
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                startActivity(intent);
+                logEvent("已通过启动 Intent 恢复前台应用：" + lastForegroundPackage);
+                return true;
+            }
+        } catch (Exception e) {
+            logEvent("启动 Intent 恢复失败：" + e.getMessage());
+        }
+        // 都失败了返回 false，让调用方用 Home 兜底
+        logEvent("无法恢复前台应用：" + lastForegroundPackage);
+        return false;
     }
 
     /**
@@ -865,6 +893,14 @@ public class MonitorService extends Service {
                 RECENT_LOGS.removeFirst();
             }
         }
+    }
+
+    /**
+     * 给无障碍服务调用，把点击过程日志同步到 UI。
+     * 用 public static 是为了让无障碍服务通过反射调用，避免循环依赖。
+     */
+    public static void logAccessEvent(String message) {
+        logEvent("[无障碍] " + message);
     }
 
     @Override
