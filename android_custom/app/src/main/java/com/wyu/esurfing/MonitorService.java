@@ -110,6 +110,10 @@ public class MonitorService extends Service {
     // 记录熄屏前的前台应用包名，重置后恢复用
     private String lastForegroundPackage = null;
     private BroadcastReceiver screenReceiver;
+    private PowerManager.WakeLock wakeLock;
+    private volatile boolean nightMode = false;
+    private volatile boolean needRestoreOnScreenOn = false;
+    private volatile boolean resetInProgress = false;
 
     public static boolean isRunning() {
         return running;
@@ -295,6 +299,12 @@ public class MonitorService extends Service {
         alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, buildNotification("后台监测已开启"));
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (pm != null) {
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "aiqin:monitor");
+            wakeLock.setReferenceCounted(false);
+        }
+
         registerScreenReceiver();
         scheduleNextNightStopAlarm();
         scheduleNextHourlyLogTrim();
@@ -360,10 +370,24 @@ public class MonitorService extends Service {
                     } else {
                         Log.d(TAG, "未能获取熄屏前前台应用（需使用情况访问权限）");
                     }
+                    if (nightMode) {
+                        logEvent("night mode, skip screen-off reset");
+                        return;
+                    }
                     scheduleScreenOffTasks();
                 } else if (Intent.ACTION_SCREEN_ON.equals(intent.getAction())) {
                     screenOn = true;
                     cancelAllPendingActions();
+
+                    if (needRestoreOnScreenOn) {
+                        needRestoreOnScreenOn = false;
+                        boolean restored = restoreLastForegroundApp();
+                        if (restored) {
+                            logEvent("screen-on restore success");
+                        } else {
+                            logEvent("screen-on restore failed");
+                        }
+                    }
                     logEvent("检测到亮屏，已取消所有后台待执行任务");
                     updateNotification("亮屏中，后台监测已开启");
                 }
@@ -399,7 +423,6 @@ public class MonitorService extends Service {
      * 包括：熄屏闹钟、无障碍点击流程、重启任务、返回任务等。
      */
     private void cancelAllPendingActions() {
-        cancelScreenOffTasks();
         ClientAccessibilityService.cancelReloginFlow();
         // 移除所有 handler 上的待执行任务（重启、返回等）
         handler.removeCallbacksAndMessages(null);
@@ -479,6 +502,16 @@ public class MonitorService extends Service {
             return;
         }
 
+        if (nightMode) {
+            logEvent("night mode, skip reset alarm");
+            cancelScreenOffTasks();
+            return;
+        }
+        if (resetInProgress) {
+            logEvent("reset in progress, skip");
+            return;
+        }
+
         if (ACTION_FIRST_RESET.equals(action)) {
             logEvent("熄屏已超过 30 秒，开始重置广东校园");
             resetClientInBackground();
@@ -497,7 +530,7 @@ public class MonitorService extends Service {
      * 保留服务是为了能在早晨自动恢复，也避免系统频繁杀掉再拉起。
      */
     private void handleNightStop() {
-        logEvent("进入夜间模式：停止熄屏重置，并关闭广东校园");
+        nightMode = true;
         cancelScreenOffTasks();
         killClient();
         updateNotification("夜间休眠中，07:00 自动恢复");
@@ -509,7 +542,6 @@ public class MonitorService extends Service {
      * 如果当时屏幕是熄灭的，就后台启动一次广东校园并压回，保证起床时网络在线。
      */
     private void handleMorningResume() {
-        logEvent("早晨恢复监测");
         updateNotification("后台监测已开启");
         scheduleNextNightStopAlarm();
         if (!screenOn) {
@@ -624,6 +656,17 @@ public class MonitorService extends Service {
      */
     private void resetClientInBackground() {
         if (!ClientAccessibilityService.isRunning()) {
+        if (resetInProgress) {
+            logEvent("reset already in progress, skip");
+            return;
+        }
+        resetInProgress = true;
+        needRestoreOnScreenOn = false;
+        acquireWakeLock();
+
+        if (lastForegroundPackage == null) {
+            lastForegroundPackage = getCurrentForegroundPackage();
+        }
             logEvent("无障碍未运行，直接杀进程重启（不点击断开）");
             doKillAndRelaunch();
             return;
@@ -690,6 +733,7 @@ public class MonitorService extends Service {
                     if (!screenOn) {
                         launchClientOnly();
                         logEvent("广东校园已重启，等待连接后压回后台");
+                needRestoreOnScreenOn = true;
                         scheduleReturnToPreviousAppAfterReset();
                         updateNotification("熄屏后台运行中");
                     } else {
@@ -904,6 +948,22 @@ public class MonitorService extends Service {
     }
 
     @Override
+    private void acquireWakeLock() {
+        if (wakeLock != null && !wakeLock.isHeld()) {
+            try {
+                wakeLock.acquire(3 * 60 * 1000L);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void releaseWakeLock() {
+        if (wakeLock != null && wakeLock.isHeld()) {
+            try {
+                wakeLock.release();
+            } catch (Exception ignored) {}
+        }
+    }
+
     public IBinder onBind(Intent intent) {
         return null;
     }
@@ -920,6 +980,7 @@ public class MonitorService extends Service {
         cancelAlarm(ACTION_HOURLY_LOG_TRIM, HOURLY_LOG_TRIM_REQUEST);
         handler.removeCallbacksAndMessages(null);
         networkExecutor.shutdownNow();
+        releaseWakeLock();
         try {
             if (screenReceiver != null) {
                 unregisterReceiver(screenReceiver);

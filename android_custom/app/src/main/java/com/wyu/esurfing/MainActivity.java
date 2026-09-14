@@ -4,7 +4,6 @@ import android.app.AppOpsManager;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Process;
-import android.content.Intent;
 import android.os.Build;
 import android.provider.Settings;
 
